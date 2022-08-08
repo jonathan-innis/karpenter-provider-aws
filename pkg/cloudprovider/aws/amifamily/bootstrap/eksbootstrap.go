@@ -70,6 +70,9 @@ func (e EKS) Script() (string, error) {
 	if e.KubeletConfig != nil {
 		kubeletExtraArgs += e.systemReservedArg()
 	}
+	if e.KubeletConfig != nil && e.KubeletConfig.PodsPerCore != nil {
+		kubeletExtraArgs += fmt.Sprintf(" --pods-per-core=%d", ptr.Int32Value(e.KubeletConfig.PodsPerCore))
+	}
 	if e.ContainerRuntime != "" {
 		userData.WriteString(fmt.Sprintf(" \\\n--container-runtime %s", e.ContainerRuntime))
 	}

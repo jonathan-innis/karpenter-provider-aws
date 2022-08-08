@@ -113,7 +113,7 @@ func (o Options) validateEndpoint() error {
 	// url.Parse() will accept a lot of input without error; make
 	// sure it's a real URL
 	if err != nil || !endpoint.IsAbs() || endpoint.Hostname() == "" {
-		return fmt.Errorf("\"%s\" not a valid CLUSTER_ENDPOINT URL", o.ClusterEndpoint)
+		return fmt.Errorf("\"%s\" not a valid CLUSTER_ENDPOINT_URL", o.ClusterEndpoint)
 	}
 	return nil
 }

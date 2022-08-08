@@ -60,6 +60,13 @@ spec:
                       pods that can run on a worker node instance.
                     format: int32
                     type: integer
+                  maxPodsPerCore:
+                    description: PodsPerCore is an override for specifying the number
+                      of pods that can run per core on the worker node instance. If
+                      this value results in a larger value than MaxPods, MaxPods will
+                      be respected over PodsPerCore
+                    format: int32
+                    type: integer
                   systemReserved:
                     additionalProperties:
                       anyOf:

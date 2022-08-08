@@ -48,6 +48,9 @@ func (b Bottlerocket) Script() (string, error) {
 		s.Settings.Kubernetes.MaxPods = aws.Int(110)
 	}
 
+	//if b.KubeletConfig != nil && b.KubeletConfig.PodsPerCore != nil {
+	//	s.Settings.Kubernetes.
+	//}
 	if b.KubeletConfig != nil && len(b.KubeletConfig.ClusterDNS) > 0 {
 		s.Settings.Kubernetes.ClusterDNSIP = &b.KubeletConfig.ClusterDNS[0]
 	}

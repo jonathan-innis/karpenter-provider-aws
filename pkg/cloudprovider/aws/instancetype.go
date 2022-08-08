@@ -68,6 +68,12 @@ func NewInstanceType(ctx context.Context, info *ec2.InstanceTypeInfo, kc *v1alph
 	} else if !injection.GetOptions(ctx).AWSENILimitedPodDensity {
 		instanceType.maxPods = ptr.Int32(110)
 	}
+	if kc != nil && kc.PodsPerCore != nil {
+		pods := ptr.Int32Value(kc.PodsPerCore) * int32(ptr.Int64Value(instanceType.VCpuInfo.DefaultVCpus))
+		if pods < ptr.Int32Value(instanceType.maxPods) {
+			instanceType.maxPods = ptr.Int32(pods)
+		}
+	}
 
 	// Precompute to minimize memory/compute overhead
 	instanceType.resources = instanceType.computeResources(injection.GetOptions(ctx).AWSEnablePodENI)

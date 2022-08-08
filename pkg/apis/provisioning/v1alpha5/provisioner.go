@@ -102,7 +102,13 @@ type KubeletConfiguration struct {
 	// a worker node instance.
 	// +optional
 	MaxPods *int32 `json:"maxPods,omitempty"`
+	// PodsPerCore is an override for specifying the number of pods that can run per
+	// core on the worker node instance. If this value results in a larger value than
+	// MaxPods, MaxPods will be respected over PodsPerCore
+	// +optional
+	PodsPerCore *int32 `json:"maxPodsPerCore,omitempty"`
 	// SystemReserved contains resources reserved for OS system daemons and kernel memory.
+	// +optional
 	SystemReserved v1.ResourceList `json:"systemReserved,omitempty"`
 }
 
