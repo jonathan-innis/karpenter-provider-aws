@@ -72,6 +72,14 @@ build: ## Build the Karpenter controller and webhook images using ko build
 	$(eval CONTROLLER_IMG=$(shell $(WITH_GOFLAGS) ko build -B github.com/aws/karpenter/cmd/controller))
 	$(eval WEBHOOK_IMG=$(shell $(WITH_GOFLAGS) ko build -B github.com/aws/karpenter/cmd/webhook))
 
+docker-build-debug:
+	docker build . \
+		-f ./debug/Dockerfile \
+		-t $(KO_DOCKER_REPO)/controller-debug:0.1.0 \
+		--build-arg CLUSTER_NAME=$(CLUSTER_NAME) \
+		--build-arg CLUSTER_ENDPOINT=$(CLUSTER_ENDPOINT)
+	docker push $(KO_DOCKER_REPO)/controller-debug:0.1.0
+
 apply: build ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
 	helm upgrade --create-namespace --install karpenter charts/karpenter --namespace karpenter \
 		$(HELM_OPTS) \
