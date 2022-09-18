@@ -9,6 +9,8 @@ spec:
   params:
     - name: cluster-name
       description: Name of the cluster under test.
+    - name: git-repo
+      description: Karpenter clone repo url
     - name: git-ref
       description: Git commit, tag, or branch to check out. Requires a corresponding Karpenter snapshot release.
   results:
@@ -29,7 +31,7 @@ spec:
     image: alpine/git
     workingDir: $(workspaces.ws.path)
     script: |
-      git clone https://github.com/aws/karpenter.git .
+      git clone $(params.git-repo) .
       git checkout $(params.git-ref)
 
   - name: create-iam-policies

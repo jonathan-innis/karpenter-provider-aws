@@ -11,6 +11,8 @@ spec:
       description: Name of the cluster under test.
     - name: test-filter
       description: Test filter passed to `go test -run`
+    - name: git-repo
+      description: Karpenter clone repo url
     - name: git-ref
       description: Git commit, tag, or branch to check out. Requires a corresponding Karpenter snapshot release.
   workspaces:
@@ -21,7 +23,7 @@ spec:
     image: alpine/git
     workingDir: $(workspaces.ws.path)
     script: |
-      git clone https://github.com/aws/karpenter.git .
+      git clone $(params.git-repo) .
       git checkout $(params.git-ref)
 
   - name: go-test

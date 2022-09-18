@@ -8,6 +8,9 @@ spec:
     - name: cluster-name
       default: $(context.pipelineRun.namespace)-$(context.pipelineRun.name)
       description: Uniquely identifies a cluster name for the suite.
+    - name: git-repo
+      default: https://github.com/aws/karpenter.git
+      description: Karpenter clone repo url
     - name: git-ref
       default: HEAD
       description: Git commit, tag, or branch to check out. Requires a corresponding Karpenter snapshot release.
@@ -24,6 +27,8 @@ spec:
     params:
     - name: cluster-name
       value: $(params.cluster-name)
+    - name: git-repo
+      value: $(params.git-repo)
     - name: git-ref
       value: $(params.git-ref)
 
@@ -33,6 +38,8 @@ spec:
     params:
     - name: cluster-name
       value: $(params.cluster-name)
+    - name: git-repo
+      value: $(params.git-repo)
     - name: git-ref
       value: $(params.git-ref)
     - name: test-filter
