@@ -19,7 +19,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	v1 "k8s.io/api/core/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -56,9 +56,7 @@ type Controller struct {
 	OnHealthy   func(context.Context)
 	OnUnhealthy func(context.Context)
 
-	opts Options
-
-	r    reconcile.Reconciler
+	r    Reconciler
 	uuid types.UID
 
 	active  bool
@@ -74,9 +72,10 @@ type Controller struct {
 	cancels sync.Map
 }
 
-type Options struct {
-	Name                string
-	MetricSubsystemName string
+type Reconciler interface {
+	reconcile.Reconciler
+	Name() string
+	MetricSubsystemName() string
 }
 
 type Object struct {
@@ -84,9 +83,8 @@ type Object struct {
 	runtime.Object
 }
 
-func NewController(rec reconcile.Reconciler, opts Options) *Controller {
+func NewController(rec Reconciler) *Controller {
 	return &Controller{
-		opts:    opts,
 		r:       rec,
 		uuid:    types.UID(uuid.New().String()),
 		trigger: make(chan event.GenericEvent, 100),
@@ -97,7 +95,7 @@ func NewController(rec reconcile.Reconciler, opts Options) *Controller {
 // the Reconciler is responsible for requeuing this message back in the WorkQueue so there is a time-based reconciliation
 // performed. The Trigger operation is performed to kick-off the loop.
 func (t *Controller) Start(ctx context.Context) {
-	logging.FromContext(ctx).Infof("Starting the %s controller...", t.opts.Name)
+	logging.FromContext(ctx).Infof("Starting the %s controller...", t.r.Name())
 	t.activeMu.Lock()
 	if !t.active {
 		t.active = true
@@ -122,7 +120,7 @@ func (t *Controller) Trigger() {
 
 // Stop sets the state of the controller to active and cancel the current reconciliation contexts, if there are any
 func (t *Controller) Stop(ctx context.Context) {
-	logging.FromContext(ctx).Infof("Stopping the %s controller...", t.opts.Name)
+	logging.FromContext(ctx).Infof("Stopping the %s controller...", t.r.Name())
 	t.SetActive(false)
 	t.cancels.Range(func(_ any, c any) bool {
 		cancel := c.(context.CancelFunc)
@@ -160,7 +158,7 @@ func (t *Controller) Healthy() bool {
 }
 
 func (t *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named(t.opts.Name))
+	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named(t.r.Name()))
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Store the cancel function for the duration of the reconcile so we can cancel on a Stop() call
@@ -197,7 +195,7 @@ func (t *Controller) Register(_ context.Context, m manager.Manager) error {
 	crmetrics.Registry.MustRegister(t.healthyMetric(), t.activeMetric(), t.triggeredCountMetric())
 	return controllerruntime.
 		NewControllerManagedBy(m).
-		Named(t.opts.Name).
+		Named(t.r.Name()).
 		WithEventFilter(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 			t.triggerMu.RLock()
 			defer t.triggerMu.RUnlock()
@@ -207,6 +205,6 @@ func (t *Controller) Register(_ context.Context, m manager.Manager) error {
 			return obj.GetUID() == t.uuid && obj.GetGeneration() == t.triggerGeneration
 		})).
 		Watches(&source.Channel{Source: t.trigger}, &handler.EnqueueRequestForObject{}).
-		For(&v1.Pod{}). // controller-runtime requires us to perform a watch on some object, so let's do it on a fundamental component
+		For(&appsv1.Deployment{}). // controller-runtime requires us to perform a watch on some object, so let's do it on a fundamental component
 		Complete(t)
 }

@@ -51,6 +51,7 @@ import (
 	metricsprovisioner "github.com/aws/karpenter/pkg/controllers/metrics/provisioner"
 	metricsstate "github.com/aws/karpenter/pkg/controllers/metrics/state"
 	"github.com/aws/karpenter/pkg/controllers/node"
+	"github.com/aws/karpenter/pkg/controllers/polling"
 	"github.com/aws/karpenter/pkg/controllers/provisioning"
 	"github.com/aws/karpenter/pkg/controllers/state"
 	"github.com/aws/karpenter/pkg/controllers/termination"
@@ -135,7 +136,6 @@ func Initialize(injectCloudProvider func(context.Context, cloudprovider.Options)
 
 	cluster := state.NewCluster(realClock, cfg, manager.GetClient(), cloudProvider)
 	provisioner := provisioning.NewProvisioner(ctx, cfg, manager.GetClient(), clientSet.CoreV1(), recorder, cloudProvider, cluster)
-	consolidation.NewController(ctx, realClock, manager.GetClient(), provisioner, cloudProvider, recorder, cluster, manager.Elected())
 
 	// Inject cloudprovider-specific controllers into the controller-set using the injectControllers function
 	// Inject the base cloud provider into the injection function rather than the decorated interface
@@ -158,6 +158,7 @@ func Initialize(injectCloudProvider func(context.Context, cloudprovider.Options)
 		metricspod.NewController(manager.GetClient()),
 		metricsprovisioner.NewController(manager.GetClient()),
 		counter.NewController(manager.GetClient(), cluster),
+		polling.NewController(consolidation.NewReconciler(realClock, manager.GetClient(), provisioner, cloudProvider, recorder, cluster)),
 	}
 	controllers = append(controllers, cloudProviderControllers...)
 

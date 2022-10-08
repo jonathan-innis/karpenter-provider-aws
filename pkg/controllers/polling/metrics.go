@@ -24,7 +24,7 @@ func (t *Controller) healthyMetric() prometheus.Gauge {
 	return prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: metrics.Namespace,
-			Subsystem: t.opts.MetricSubsystemName,
+			Subsystem: t.r.MetricSubsystemName(),
 			Name:      "healthy",
 			Help:      "Whether the controller is in a healthy state.",
 		},
@@ -35,7 +35,7 @@ func (t *Controller) activeMetric() prometheus.Gauge {
 	return prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: metrics.Namespace,
-			Subsystem: t.opts.MetricSubsystemName,
+			Subsystem: t.r.MetricSubsystemName(),
 			Name:      "active",
 			Help:      "Whether the controller is active.",
 		},
@@ -46,7 +46,7 @@ func (t *Controller) triggeredCountMetric() prometheus.Counter {
 	return prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: metrics.Namespace,
-			Subsystem: t.opts.MetricSubsystemName,
+			Subsystem: t.r.MetricSubsystemName(),
 			Name:      "trigger_count",
 			Help:      "A counter of the number of times this controller has been triggered.",
 		},

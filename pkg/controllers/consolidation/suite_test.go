@@ -52,7 +52,7 @@ import (
 var ctx context.Context
 var env *test.Environment
 var cluster *state.Cluster
-var controller *consolidation.Controller
+var controller *consolidation.Reconciler
 var provisioningController *provisioning.Controller
 var provisioner *provisioning.Provisioner
 var cloudProvider *fake.CloudProvider

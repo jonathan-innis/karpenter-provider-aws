@@ -32,6 +32,7 @@ import (
 	"knative.dev/pkg/logging"
 	"knative.dev/pkg/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/aws/karpenter/pkg/cloudprovider"
@@ -45,9 +46,9 @@ import (
 	"github.com/aws/karpenter/pkg/utils/pod"
 )
 
-// Controller is the consolidation controller.  It is not a standard controller-runtime controller in that it doesn't
+// Reconciler is the consolidation reconciler.  It is not a standard controller-runtime controller in that it doesn't
 // have a reconcile method.
-type Controller struct {
+type Reconciler struct {
 	kubeClient             client.Client
 	cluster                *state.Cluster
 	provisioner            *provisioning.Provisioner
@@ -70,9 +71,10 @@ var waitRetryOptions = []retry.Option{
 	retry.MaxDelay(10 * time.Second), // 22 + (60-5)*10 =~ 9.5 minutes in total
 }
 
-func NewController(ctx context.Context, clk clock.Clock, kubeClient client.Client, provisioner *provisioning.Provisioner,
-	cp cloudprovider.CloudProvider, recorder events.Recorder, cluster *state.Cluster, startAsync <-chan struct{}) *Controller {
-	c := &Controller{
+func NewReconciler(clk clock.Clock, kubeClient client.Client, provisioner *provisioning.Provisioner,
+	cp cloudprovider.CloudProvider, recorder events.Recorder, cluster *state.Cluster) *Reconciler {
+
+	return &Reconciler{
 		clock:         clk,
 		kubeClient:    kubeClient,
 		cluster:       cluster,
@@ -80,50 +82,38 @@ func NewController(ctx context.Context, clk clock.Clock, kubeClient client.Clien
 		recorder:      recorder,
 		cloudProvider: cp,
 	}
-
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		case <-startAsync:
-			c.run(ctx)
-		}
-	}()
-
-	return c
 }
 
-func (c *Controller) run(ctx context.Context) {
-	logger := logging.FromContext(ctx).Named("consolidation")
-	ctx = logging.WithLogger(ctx, logger)
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Infof("Shutting down")
-			return
-		case <-time.After(pollingPeriod):
-			// the last cluster consolidation wasn't able to improve things and nothing has changed regarding
-			// the cluster that makes us think we would be successful now
-			if c.lastConsolidationState == c.cluster.ClusterConsolidationState() {
-				continue
-			}
+func (r *Reconciler) Name() string {
+	return "consolidation"
+}
 
-			// don't consolidate as we recently scaled up/down too soon
-			stabilizationTime := c.clock.Now().Add(-c.stabilizationWindow(ctx))
-			// capture the state before we process so if something changes during consolidation we'll re-look
-			// immediately
-			clusterState := c.cluster.ClusterConsolidationState()
-			if c.cluster.LastNodeDeletionTime().Before(stabilizationTime) &&
-				c.cluster.LastNodeCreationTime().Before(stabilizationTime) {
-				result, err := c.ProcessCluster(ctx)
-				if err != nil {
-					logging.FromContext(ctx).Errorf("consolidating cluster, %s", err)
-				} else if result == ProcessResultNothingToDo {
-					c.lastConsolidationState = clusterState
-				}
-			}
+func (r *Reconciler) MetricSubsystemName() string {
+	return "consolidation"
+}
+
+func (r *Reconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
+	// the last cluster consolidation wasn't able to improve things and nothing has changed regarding
+	// the cluster that makes us think we would be successful now
+	if r.lastConsolidationState == r.cluster.ClusterConsolidationState() {
+		return reconcile.Result{RequeueAfter: pollingPeriod}, nil
+	}
+
+	// don't consolidate as we recently scaled up/down too soon
+	stabilizationTime := r.clock.Now().Add(-r.stabilizationWindow(ctx))
+	// capture the state before we process so if something changes during consolidation we'll re-look
+	// immediately
+	clusterState := r.cluster.ClusterConsolidationState()
+	if r.cluster.LastNodeDeletionTime().Before(stabilizationTime) &&
+		r.cluster.LastNodeCreationTime().Before(stabilizationTime) {
+		result, err := r.ProcessCluster(ctx)
+		if err != nil {
+			logging.FromContext(ctx).Errorf("consolidating cluster, %s", err)
+		} else if result == ProcessResultNothingToDo {
+			r.lastConsolidationState = clusterState
 		}
 	}
+	return reconcile.Result{RequeueAfter: pollingPeriod}, nil
 }
 
 // candidateNode is a node that we are considering for consolidation along with extra information to be used in
@@ -139,8 +129,8 @@ type candidateNode struct {
 }
 
 // ProcessCluster is exposed for unit testing purposes
-func (c *Controller) ProcessCluster(ctx context.Context) (ProcessResult, error) {
-	candidates, err := c.candidateNodes(ctx)
+func (r *Reconciler) ProcessCluster(ctx context.Context) (ProcessResult, error) {
+	candidates, err := r.candidateNodes(ctx)
 	if err != nil {
 		return ProcessResultFailed, fmt.Errorf("determining candidate nodes, %w", err)
 	}
@@ -151,14 +141,14 @@ func (c *Controller) ProcessCluster(ctx context.Context) (ProcessResult, error) 
 	emptyNodes := lo.Filter(candidates, func(n candidateNode, _ int) bool { return len(n.pods) == 0 })
 	// first see if there are empty nodes that we can delete immediately, and if so delete them all at once
 	if len(emptyNodes) > 0 {
-		c.performConsolidation(ctx, consolidationAction{
+		r.performConsolidation(ctx, consolidationAction{
 			oldNodes: lo.Map(emptyNodes, func(n candidateNode, _ int) *v1.Node { return n.Node }),
 			result:   consolidateResultDeleteEmpty,
 		})
 		return ProcessResultConsolidated, nil
 	}
 
-	pdbs, err := NewPDBLimits(ctx, c.kubeClient)
+	pdbs, err := NewPDBLimits(ctx, r.kubeClient)
 	if err != nil {
 		return ProcessResultFailed, fmt.Errorf("tracking PodDisruptionBudgets, %w", err)
 	}
@@ -169,18 +159,18 @@ func (c *Controller) ProcessCluster(ctx context.Context) (ProcessResult, error) 
 	for _, node := range candidates {
 		// is this a node that we can terminate?  This check is meant to be fast so we can save the expense of simulated
 		// scheduling unless its really needed
-		if err = c.canBeTerminated(node, pdbs); err != nil {
+		if err = r.canBeTerminated(node, pdbs); err != nil {
 			continue
 		}
 
-		action, err := c.nodeConsolidationOptionReplaceOrDelete(ctx, node)
+		action, err := r.nodeConsolidationOptionReplaceOrDelete(ctx, node)
 		if err != nil {
 			logging.FromContext(ctx).Errorf("calculating consolidation option, %s", err)
 			continue
 		}
 		if action.result == consolidateResultDelete || action.result == consolidateResultReplace {
 			// perform the first consolidation we can since we are looking at nodes in ascending order of disruption cost
-			c.performConsolidation(ctx, action)
+			r.performConsolidation(ctx, action)
 			return ProcessResultConsolidated, nil
 		}
 	}
@@ -190,14 +180,14 @@ func (c *Controller) ProcessCluster(ctx context.Context) (ProcessResult, error) 
 // candidateNodes returns nodes that appear to be currently consolidatable based off of their provisioner
 //
 //gocyclo:ignore
-func (c *Controller) candidateNodes(ctx context.Context) ([]candidateNode, error) {
-	provisioners, instanceTypesByProvisioner, err := c.buildProvisionerMap(ctx)
+func (r *Reconciler) candidateNodes(ctx context.Context) ([]candidateNode, error) {
+	provisioners, instanceTypesByProvisioner, err := r.buildProvisionerMap(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	var nodes []candidateNode
-	c.cluster.ForEachNode(func(n *state.Node) bool {
+	r.cluster.ForEachNode(func(n *state.Node) bool {
 		var provisioner *v1alpha5.Provisioner
 		var instanceTypeMap map[string]cloudprovider.InstanceType
 		if provName, ok := n.Node.Labels[v1alpha5.ProvisionerNameLabelKey]; ok {
@@ -234,7 +224,7 @@ func (c *Controller) candidateNodes(ctx context.Context) ([]candidateNode, error
 			return true
 		}
 
-		if c.cluster.IsNodeNominated(n.Node.Name) {
+		if r.cluster.IsNodeNominated(n.Node.Name) {
 			return true
 		}
 
@@ -244,11 +234,11 @@ func (c *Controller) candidateNodes(ctx context.Context) ([]candidateNode, error
 		}
 
 		// skip nodes that the scheduler thinks will soon have pending pods bound to them
-		if c.cluster.IsNodeNominated(n.Node.Name) {
+		if r.cluster.IsNodeNominated(n.Node.Name) {
 			return true
 		}
 
-		pods, err := nodeutils.GetNodePods(ctx, c.kubeClient, n.Node)
+		pods, err := nodeutils.GetNodePods(ctx, r.kubeClient, n.Node)
 		if err != nil {
 			logging.FromContext(ctx).Errorf("Determining node pods, %s", err)
 			return true
@@ -266,7 +256,7 @@ func (c *Controller) candidateNodes(ctx context.Context) ([]candidateNode, error
 		// lifetimeRemaining is the fraction of node lifetime remaining in the range [0.0, 1.0].  If the TTLSecondsUntilExpired
 		// is non-zero, we use it to scale down the disruption costs of nodes that are going to expire.  Just after creation, the
 		// disruption cost is highest and it approaches zero as the node ages towards its expiration time.
-		lifetimeRemaining := c.calculateLifetimeRemaining(cn)
+		lifetimeRemaining := r.calculateLifetimeRemaining(cn)
 		cn.disruptionCost *= lifetimeRemaining
 
 		nodes = append(nodes, cn)
@@ -277,10 +267,10 @@ func (c *Controller) candidateNodes(ctx context.Context) ([]candidateNode, error
 }
 
 // buildProvisionerMap builds a provName -> provisioner map and a provName -> instanceName -> instance type map
-func (c *Controller) buildProvisionerMap(ctx context.Context) (map[string]*v1alpha5.Provisioner, map[string]map[string]cloudprovider.InstanceType, error) {
+func (r *Reconciler) buildProvisionerMap(ctx context.Context) (map[string]*v1alpha5.Provisioner, map[string]map[string]cloudprovider.InstanceType, error) {
 	provisioners := map[string]*v1alpha5.Provisioner{}
 	var provList v1alpha5.ProvisionerList
-	if err := c.kubeClient.List(ctx, &provList); err != nil {
+	if err := r.kubeClient.List(ctx, &provList); err != nil {
 		return nil, nil, fmt.Errorf("listing provisioners, %w", err)
 	}
 	instanceTypesByProvisioner := map[string]map[string]cloudprovider.InstanceType{}
@@ -288,7 +278,7 @@ func (c *Controller) buildProvisionerMap(ctx context.Context) (map[string]*v1alp
 		p := &provList.Items[i]
 		provisioners[p.Name] = p
 
-		provInstanceTypes, err := c.cloudProvider.GetInstanceTypes(ctx, p)
+		provInstanceTypes, err := r.cloudProvider.GetInstanceTypes(ctx, p)
 		if err != nil {
 			return nil, nil, fmt.Errorf("listing instance types for %s, %w", p.Name, err)
 		}
@@ -300,7 +290,7 @@ func (c *Controller) buildProvisionerMap(ctx context.Context) (map[string]*v1alp
 	return provisioners, instanceTypesByProvisioner, nil
 }
 
-func (c *Controller) performConsolidation(ctx context.Context, action consolidationAction) {
+func (r *Reconciler) performConsolidation(ctx context.Context, action consolidationAction) {
 	if action.result != consolidateResultDelete &&
 		action.result != consolidateResultReplace &&
 		action.result != consolidateResultDeleteEmpty {
@@ -314,7 +304,7 @@ func (c *Controller) performConsolidation(ctx context.Context, action consolidat
 	logging.FromContext(ctx).Infof("Consolidating via %s", action.String())
 
 	if action.result == consolidateResultReplace {
-		if err := c.launchReplacementNode(ctx, action); err != nil {
+		if err := r.launchReplacementNode(ctx, action); err != nil {
 			// If we failed to launch the replacement, don't consolidate.  If this is some permanent failure,
 			// we don't want to disrupt workloads with no way to provision new nodes for them.
 			logging.FromContext(ctx).Errorf("Launching replacement node, %s", err)
@@ -323,8 +313,8 @@ func (c *Controller) performConsolidation(ctx context.Context, action consolidat
 	}
 
 	for _, oldNode := range action.oldNodes {
-		c.recorder.TerminatingNodeForConsolidation(oldNode, action.String())
-		if err := c.kubeClient.Delete(ctx, oldNode); err != nil {
+		r.recorder.TerminatingNodeForConsolidation(oldNode, action.String())
+		if err := r.kubeClient.Delete(ctx, oldNode); err != nil {
 			logging.FromContext(ctx).Errorf("Deleting node, %s", err)
 		} else {
 			metrics.NodesTerminatedCounter.WithLabelValues(metrics.ConsolidationReason).Inc()
@@ -334,23 +324,23 @@ func (c *Controller) performConsolidation(ctx context.Context, action consolidat
 	// We wait for nodes to delete to ensure we don't start another round of consolidation until this node is fully
 	// deleted.
 	for _, oldnode := range action.oldNodes {
-		c.waitForDeletion(ctx, oldnode)
+		r.waitForDeletion(ctx, oldnode)
 	}
 }
 
 // waitForDeletion waits for the specified node to be removed from the API server. This deletion can take some period
 // of time if there are PDBs that govern pods on the node as we need to  wait until the node drains before
 // it's actually deleted.
-func (c *Controller) waitForDeletion(ctx context.Context, node *v1.Node) {
+func (r *Reconciler) waitForDeletion(ctx context.Context, node *v1.Node) {
 	if err := retry.Do(func() error {
 		var n v1.Node
-		nerr := c.kubeClient.Get(ctx, client.ObjectKey{Name: node.Name}, &n)
+		nerr := r.kubeClient.Get(ctx, client.ObjectKey{Name: node.Name}, &n)
 		// We expect the not node found error, at which point we know the node is deleted.
 		if errors.IsNotFound(nerr) {
 			return nil
 		}
 		// make the user aware of why consolidation is paused
-		c.recorder.WaitingOnDeletionForConsolidation(node)
+		r.recorder.WaitingOnDeletionForConsolidation(node)
 		if nerr != nil {
 			return fmt.Errorf("expected node to be not found, %w", nerr)
 		}
@@ -373,7 +363,7 @@ func byNodeDisruptionCost(nodes []candidateNode) func(i int, j int) bool {
 }
 
 // launchReplacementNode launches a replacement node and blocks until it is ready
-func (c *Controller) launchReplacementNode(ctx context.Context, action consolidationAction) error {
+func (r *Reconciler) launchReplacementNode(ctx context.Context, action consolidationAction) error {
 	defer metrics.Measure(consolidationReplacementNodeInitializedHistogram)()
 	if len(action.oldNodes) != 1 {
 		return fmt.Errorf("expected a single node to replace, found %d", len(action.oldNodes))
@@ -381,14 +371,14 @@ func (c *Controller) launchReplacementNode(ctx context.Context, action consolida
 	oldNode := action.oldNodes[0]
 
 	// cordon the node before we launch the replacement to prevent new pods from scheduling to the node
-	if err := c.setNodeUnschedulable(ctx, oldNode.Name, true); err != nil {
+	if err := r.setNodeUnschedulable(ctx, oldNode.Name, true); err != nil {
 		return fmt.Errorf("cordoning node %s, %w", oldNode.Name, err)
 	}
 
-	nodeNames, err := c.provisioner.LaunchNodes(ctx, provisioning.LaunchOptions{RecordPodNomination: false}, action.replacementNode)
+	nodeNames, err := r.provisioner.LaunchNodes(ctx, provisioning.LaunchOptions{RecordPodNomination: false}, action.replacementNode)
 	if err != nil {
 		// uncordon the node as the launch may fail (e.g. ICE or incompatible AMI)
-		err = multierr.Append(err, c.setNodeUnschedulable(ctx, oldNode.Name, false))
+		err = multierr.Append(err, r.setNodeUnschedulable(ctx, oldNode.Name, false))
 		return err
 	}
 	if len(nodeNames) != 1 {
@@ -399,45 +389,45 @@ func (c *Controller) launchReplacementNode(ctx context.Context, action consolida
 	metrics.NodesCreatedCounter.WithLabelValues(metrics.ConsolidationReason).Inc()
 
 	// We have the new node created at the API server so mark the old node for deletion
-	c.cluster.MarkForDeletion(oldNode.Name)
+	r.cluster.MarkForDeletion(oldNode.Name)
 
 	var k8Node v1.Node
 	// Wait for the node to be ready
 	var once sync.Once
 	if err := retry.Do(func() error {
-		if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeNames[0]}, &k8Node); err != nil {
+		if err := r.kubeClient.Get(ctx, client.ObjectKey{Name: nodeNames[0]}, &k8Node); err != nil {
 			return fmt.Errorf("getting node, %w", err)
 		}
 		once.Do(func() {
-			c.recorder.LaunchingNodeForConsolidation(&k8Node, action.String())
+			r.recorder.LaunchingNodeForConsolidation(&k8Node, action.String())
 		})
 
 		if _, ok := k8Node.Labels[v1alpha5.LabelNodeInitialized]; !ok {
 			// make the user aware of why consolidation is paused
-			c.recorder.WaitingOnReadinessForConsolidation(&k8Node)
+			r.recorder.WaitingOnReadinessForConsolidation(&k8Node)
 			return fmt.Errorf("node is not initialized")
 		}
 		return nil
 	}, waitRetryOptions...); err != nil {
 		// node never become ready, so uncordon the node we were trying to delete and report the error
-		c.cluster.UnmarkForDeletion(oldNode.Name)
-		return multierr.Combine(c.setNodeUnschedulable(ctx, oldNode.Name, false),
+		r.cluster.UnmarkForDeletion(oldNode.Name)
+		return multierr.Combine(r.setNodeUnschedulable(ctx, oldNode.Name, false),
 			fmt.Errorf("timed out checking node readiness, %w", err))
 	}
 	return nil
 }
 
-func (c *Controller) canBeTerminated(node candidateNode, pdbs *PDBLimits) error {
+func (r *Reconciler) canBeTerminated(node candidateNode, pdbs *PDBLimits) error {
 	if !node.DeletionTimestamp.IsZero() {
 		return fmt.Errorf("already being deleted")
 	}
 	if !pdbs.CanEvictPods(node.pods) {
 		return fmt.Errorf("not eligible for termination due to PDBs")
 	}
-	return c.podsPreventEviction(node)
+	return r.podsPreventEviction(node)
 }
 
-func (c *Controller) podsPreventEviction(node candidateNode) error {
+func (r *Reconciler) podsPreventEviction(node candidateNode) error {
 	for _, p := range node.pods {
 		// don't care about pods that are finishing, finished or owned by the node
 		if pod.IsTerminating(p) || pod.IsTerminal(p) || pod.IsOwnedByNode(p) {
@@ -458,10 +448,10 @@ func (c *Controller) podsPreventEviction(node candidateNode) error {
 // calculateLifetimeRemaining calculates the fraction of node lifetime remaining in the range [0.0, 1.0].  If the TTLSecondsUntilExpired
 // is non-zero, we use it to scale down the disruption costs of nodes that are going to expire.  Just after creation, the
 // disruption cost is highest and it approaches zero as the node ages towards its expiration time.
-func (c *Controller) calculateLifetimeRemaining(node candidateNode) float64 {
+func (r *Reconciler) calculateLifetimeRemaining(node candidateNode) float64 {
 	remaining := 1.0
 	if node.provisioner.Spec.TTLSecondsUntilExpired != nil {
-		ageInSeconds := c.clock.Since(node.CreationTimestamp.Time).Seconds()
+		ageInSeconds := r.clock.Since(node.CreationTimestamp.Time).Seconds()
 		totalLifetimeSeconds := float64(*node.provisioner.Spec.TTLSecondsUntilExpired)
 		lifetimeRemainingSeconds := totalLifetimeSeconds - ageInSeconds
 		remaining = clamp(0.0, lifetimeRemainingSeconds/totalLifetimeSeconds, 1.0)
@@ -470,14 +460,14 @@ func (c *Controller) calculateLifetimeRemaining(node candidateNode) float64 {
 }
 
 // nolint:gocyclo
-func (c *Controller) nodeConsolidationOptionReplaceOrDelete(ctx context.Context, node candidateNode) (consolidationAction, error) {
+func (r *Reconciler) nodeConsolidationOptionReplaceOrDelete(ctx context.Context, node candidateNode) (consolidationAction, error) {
 	defer metrics.Measure(consolidationDurationHistogram.WithLabelValues("Replace/Delete"))()
 
 	var stateNodes []*state.Node
 	var markedForDeletionNodes []*state.Node
 	candidateNodeIsDeleting := false
 
-	c.cluster.ForEachNode(func(n *state.Node) bool {
+	r.cluster.ForEachNode(func(n *state.Node) bool {
 		if node.Name == n.Node.Name && n.MarkedForDeletion {
 			candidateNodeIsDeleting = true
 		}
@@ -498,12 +488,12 @@ func (c *Controller) nodeConsolidationOptionReplaceOrDelete(ctx context.Context,
 	}
 
 	// We get the pods that are on nodes that are deleting
-	deletingNodePods, err := nodeutils.GetNodePods(ctx, c.kubeClient, lo.Map(markedForDeletionNodes, func(n *state.Node, _ int) *v1.Node { return n.Node })...)
+	deletingNodePods, err := nodeutils.GetNodePods(ctx, r.kubeClient, lo.Map(markedForDeletionNodes, func(n *state.Node, _ int) *v1.Node { return n.Node })...)
 	if err != nil {
 		return consolidationAction{result: consolidateResultUnknown}, fmt.Errorf("failed to get pods from deleting nodes, %w", err)
 	}
 	pods := append(node.pods, deletingNodePods...)
-	scheduler, err := c.provisioner.NewScheduler(ctx, pods, stateNodes, scheduling.SchedulerOptions{
+	scheduler, err := r.provisioner.NewScheduler(ctx, pods, stateNodes, scheduling.SchedulerOptions{
 		SimulationMode: true,
 	})
 
@@ -564,9 +554,9 @@ func (c *Controller) nodeConsolidationOptionReplaceOrDelete(ctx context.Context,
 	}, nil
 }
 
-func (c *Controller) hasPendingPods(ctx context.Context) bool {
+func (r *Reconciler) hasPendingPods(ctx context.Context) bool {
 	var podList v1.PodList
-	if err := c.kubeClient.List(ctx, &podList, client.MatchingFields{"spec.nodeName": ""}); err != nil {
+	if err := r.kubeClient.List(ctx, &podList, client.MatchingFields{"spec.nodeName": ""}); err != nil {
 		// failed to list pods, assume there must be pending as it's harmless and just ensures we wait longer
 		return true
 	}
@@ -578,9 +568,9 @@ func (c *Controller) hasPendingPods(ctx context.Context) bool {
 	return false
 }
 
-func (c *Controller) deploymentsReady(ctx context.Context) bool {
+func (r *Reconciler) deploymentsReady(ctx context.Context) bool {
 	var depList appsv1.DeploymentList
-	if err := c.kubeClient.List(ctx, &depList); err != nil {
+	if err := r.kubeClient.List(ctx, &depList); err != nil {
 		// failed to list, assume there must be one non-ready as it's harmless and just ensures we wait longer
 		return false
 	}
@@ -597,9 +587,9 @@ func (c *Controller) deploymentsReady(ctx context.Context) bool {
 	return true
 }
 
-func (c *Controller) replicaSetsReady(ctx context.Context) bool {
+func (r *Reconciler) replicaSetsReady(ctx context.Context) bool {
 	var rsList appsv1.ReplicaSetList
-	if err := c.kubeClient.List(ctx, &rsList); err != nil {
+	if err := r.kubeClient.List(ctx, &rsList); err != nil {
 		// failed to list, assume there must be one non-ready as it's harmless and just ensures we wait longer
 		return false
 	}
@@ -616,9 +606,9 @@ func (c *Controller) replicaSetsReady(ctx context.Context) bool {
 	return true
 }
 
-func (c *Controller) replicationControllersReady(ctx context.Context) bool {
+func (r *Reconciler) replicationControllersReady(ctx context.Context) bool {
 	var rsList v1.ReplicationControllerList
-	if err := c.kubeClient.List(ctx, &rsList); err != nil {
+	if err := r.kubeClient.List(ctx, &rsList); err != nil {
 		// failed to list, assume there must be one non-ready as it's harmless and just ensures we wait longer
 		return false
 	}
@@ -635,9 +625,9 @@ func (c *Controller) replicationControllersReady(ctx context.Context) bool {
 	return true
 }
 
-func (c *Controller) statefulSetsReady(ctx context.Context) bool {
+func (r *Reconciler) statefulSetsReady(ctx context.Context) bool {
 	var sslist appsv1.StatefulSetList
-	if err := c.kubeClient.List(ctx, &sslist); err != nil {
+	if err := r.kubeClient.List(ctx, &sslist); err != nil {
 		// failed to list, assume there must be one non-ready as it's harmless and just ensures we wait longer
 		return false
 	}
@@ -654,18 +644,18 @@ func (c *Controller) statefulSetsReady(ctx context.Context) bool {
 	return true
 }
 
-func (c *Controller) stabilizationWindow(ctx context.Context) time.Duration {
+func (r *Reconciler) stabilizationWindow(ctx context.Context) time.Duration {
 	// no pending pods, and all replica sets/replication controllers are reporting ready so quickly consider another consolidation
-	if !c.hasPendingPods(ctx) && c.deploymentsReady(ctx) && c.replicaSetsReady(ctx) &&
-		c.replicationControllersReady(ctx) && c.statefulSetsReady(ctx) {
+	if !r.hasPendingPods(ctx) && r.deploymentsReady(ctx) && r.replicaSetsReady(ctx) &&
+		r.replicationControllersReady(ctx) && r.statefulSetsReady(ctx) {
 		return 0
 	}
 	return 5 * time.Minute
 }
 
-func (c *Controller) setNodeUnschedulable(ctx context.Context, nodeName string, isUnschedulable bool) error {
+func (r *Reconciler) setNodeUnschedulable(ctx context.Context, nodeName string, isUnschedulable bool) error {
 	var node v1.Node
-	if err := c.kubeClient.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
+	if err := r.kubeClient.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
 		return fmt.Errorf("getting node, %w", err)
 	}
 
@@ -681,7 +671,7 @@ func (c *Controller) setNodeUnschedulable(ctx context.Context, nodeName string, 
 
 	persisted := node.DeepCopy()
 	node.Spec.Unschedulable = isUnschedulable
-	if err := c.kubeClient.Patch(ctx, &node, client.MergeFrom(persisted)); err != nil {
+	if err := r.kubeClient.Patch(ctx, &node, client.MergeFrom(persisted)); err != nil {
 		return fmt.Errorf("patching node %s, %w", node.Name, err)
 	}
 	return nil
