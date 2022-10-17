@@ -32,12 +32,12 @@ type resourceKey struct{}
 
 // LoggingContextOrDie injects a logger into the returned context. The logger is
 // configured by the ConfigMap `config-logging` and live updates the level.
-func LoggingContextOrDie(componentName string, config *rest.Config, cmw *informer.InformedWatcher) context.Context {
+func LoggingContextOrDie(componentName string, config *rest.Config, iw *informer.InformedWatcher) context.Context {
 	ctx, startinformers := knativeinjection.EnableInjectionOrDie(signals.NewContext(), config)
 	logger, atomicLevel := sharedmain.SetupLoggerOrDie(ctx, componentName)
 	ctx = logging.WithLogger(ctx, logger)
 	rest.SetDefaultWarningHandler(&logging.WarningHandler{Logger: logger})
-	sharedmain.WatchLoggingConfigOrDie(ctx, cmw, logger, atomicLevel, componentName)
+	sharedmain.WatchLoggingConfigOrDie(ctx, iw, logger, atomicLevel, componentName)
 	startinformers()
 	return ctx
 }

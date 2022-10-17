@@ -55,14 +55,15 @@ func init() {
 
 // Options exposes shared components that are initialized by the startup.Initialize() call
 type Options struct {
-	Ctx        context.Context
-	Recorder   events.Recorder
-	Config     config.Config
-	KubeClient client.Client
-	Clientset  *kubernetes.Clientset
-	Clock      clock.Clock
-	Options    *options.Options
-	StartAsync <-chan struct{}
+	Ctx           context.Context
+	Recorder      events.Recorder
+	Config        config.Config
+	ConfigWatcher *config.ChangeWatcher // notifier when karpenter-global-settings changes
+	KubeClient    client.Client
+	Clientset     *kubernetes.Clientset
+	Clock         clock.Clock
+	Options       *options.Options
+	StartAsync    <-chan struct{}
 }
 
 func NewOptionsWithManagerOrDie() (Options, manager.Manager) {
@@ -75,8 +76,8 @@ func NewOptionsWithManagerOrDie() (Options, manager.Manager) {
 	clientSet := kubernetes.NewForConfigOrDie(controllerRuntimeConfig)
 
 	// Set up logger and watch for changes to log level
-	cmw := informer.NewInformedWatcher(clientSet, system.Namespace())
-	ctx := injection.LoggingContextOrDie(component, controllerRuntimeConfig, cmw)
+	informer := informer.NewInformedWatcher(clientSet, system.Namespace())
+	ctx := injection.LoggingContextOrDie(component, controllerRuntimeConfig, informer)
 	ctx = injection.WithConfig(ctx, controllerRuntimeConfig)
 	ctx = injection.WithOptions(ctx, *opts)
 
@@ -87,12 +88,13 @@ func NewOptionsWithManagerOrDie() (Options, manager.Manager) {
 		debug.SetMemoryLimit(newLimit)
 	}
 
-	cfg, err := config.New(ctx, clientSet, cmw)
+	cw, err := config.NewChangeWatcher(ctx, informer)
 	if err != nil {
-		// this does not happen if the config map is missing or invalid, only if some other error occurs
-		logging.FromContext(ctx).Fatalf("unable to load config, %s", err)
+		logging.FromContext(ctx).Fatalf("starting change watcher, %s", err)
 	}
-	if err := cmw.Start(ctx.Done()); err != nil {
+	cfg := config.NewConfig(cw)
+
+	if err := informer.Start(ctx.Done()); err != nil {
 		logging.FromContext(ctx).Errorf("watching configmaps, config changes won't be applied immediately, %s", err)
 	}
 
@@ -102,13 +104,14 @@ func NewOptionsWithManagerOrDie() (Options, manager.Manager) {
 	recorder = events.NewDedupeRecorder(recorder)
 
 	return Options{
-		Ctx:        ctx,
-		Recorder:   recorder,
-		Config:     cfg,
-		Clientset:  clientSet,
-		KubeClient: manager.GetClient(),
-		Clock:      clock.RealClock{},
-		Options:    opts,
-		StartAsync: manager.Elected(),
+		Ctx:           ctx,
+		Recorder:      recorder,
+		Config:        cfg,
+		ConfigWatcher: cw,
+		Clientset:     clientSet,
+		KubeClient:    manager.GetClient(),
+		Clock:         clock.RealClock{},
+		Options:       opts,
+		StartAsync:    manager.Elected(),
 	}, manager
 }

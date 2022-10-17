@@ -42,7 +42,8 @@ var env *test.Environment
 var clientSet *kubernetes.Clientset
 var cfg config.Config
 var finished func()
-var cmw *informer.InformedWatcher
+var iw *informer.InformedWatcher
+var cw *config.ChangeWatcher
 
 func TestAPIs(t *testing.T) {
 	ctx = TestContextWithLogger(t)
@@ -61,11 +62,13 @@ var _ = BeforeSuite(func() {
 		cm.Name = "karpenter-global-settings"
 		ExpectApplied(ctx, env.Client, &cm)
 
-		cmw = informer.NewInformedWatcher(clientSet, os.Getenv("SYSTEM_NAMESPACE"))
 		var err error
-		cfg, err = config.New(ctx, clientSet, cmw)
+		iw = informer.NewInformedWatcher(clientSet, os.Getenv("SYSTEM_NAMESPACE"))
+		cw, err = config.NewChangeWatcher(ctx, iw)
 		Expect(err).To(BeNil())
-		Expect(cmw.Start(ctx.Done())).To(Succeed())
+		config.NewConfig(cw)
+
+		Expect(iw.Start(ctx.Done())).To(Succeed())
 	})
 	Expect(env.Start()).To(Succeed(), "Failed to start environment")
 })
@@ -77,13 +80,13 @@ var _ = BeforeEach(func() {
 	err := env.Client.Delete(ctx, &cm)
 	Expect(err).ToNot(HaveOccurred())
 
-	cfg, err = config.New(ctx, clientSet, cmw)
+	config.NewConfig(cw)
 	Expect(err).ToNot(HaveOccurred())
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	var once sync.Once
-	cfg.OnChange(func(c config.Config) {
+	cw.OnChange(func(_ context.Context, _ *v1.ConfigMap) {
 		once.Do(wg.Done)
 	})
 	ExpectApplied(ctx, env.Client, &cm)
@@ -105,7 +108,7 @@ var _ = Describe("Batch Parameter", func() {
 		Expect(cfg.BatchIdleDuration()).To(Equal(1 * time.Second))
 		Expect(cfg.BatchMaxDuration()).To(Equal(10 * time.Second))
 		var changed int64
-		cfg.OnChange(func(c config.Config) {
+		cw.OnChange(func(_ context.Context, _ *v1.ConfigMap) {
 			defer GinkgoRecover()
 			if atomic.LoadInt64(&changed) == 0 {
 				atomic.StoreInt64(&changed, 1)
@@ -139,7 +142,7 @@ var _ = Describe("Batch Parameter", func() {
 		Expect(cfg.BatchIdleDuration()).To(Equal(1 * time.Second))
 		Expect(cfg.BatchMaxDuration()).To(Equal(10 * time.Second))
 		var changed int64
-		cfg.OnChange(func(c config.Config) {
+		cw.OnChange(func(_ context.Context, _ *v1.ConfigMap) {
 			defer GinkgoRecover()
 			atomic.StoreInt64(&changed, 1)
 		})
