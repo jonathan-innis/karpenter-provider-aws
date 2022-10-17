@@ -62,7 +62,7 @@ var _ = Describe("Expiration", func() {
 		// Eventually expect the node to be gone
 		env.EventuallyExpectNotFound(node)
 	})
-	It("should replace expired node with a single node and schedule all pods", func() {
+	FIt("should replace expired node with a single node and schedule all pods", func() {
 		provider := test.AWSNodeTemplate(v1alpha1.AWSNodeTemplateSpec{AWS: awsv1alpha1.AWS{
 			SecurityGroupSelector: map[string]string{"karpenter.sh/discovery": env.ClusterName},
 			SubnetSelector:        map[string]string{"karpenter.sh/discovery": env.ClusterName},

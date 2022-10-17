@@ -46,6 +46,7 @@ func TestUtilization(t *testing.T) {
 
 var _ = BeforeEach(func() { env.BeforeEach(common.EnableDebug) })
 var _ = AfterEach(func() { env.AfterEach(common.EnableDebug) })
+var _ = AfterEach(func() { env.DumpLogs(common.EnableDebug) })
 
 var _ = Describe("Utilization", Label(common.NoWatch), Label(common.NoEvents), func() {
 	It("should provision one pod per node", func() {

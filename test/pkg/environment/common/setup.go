@@ -219,7 +219,12 @@ func (env *Environment) AfterEach(opts ...Option) {
 	env.CleanupObjects(CleanableObjects, options)
 	env.eventuallyExpectScaleDown()
 	env.expectNoCrashes()
+}
+
+func (env *Environment) DumpLogs(opts ...Option) {
+	options := ResolveOptions(opts)
 	close(stop) // close the pod/node monitor watch channel
+
 	if options.EnableDebug && !lo.Contains(CurrentSpecReport().Labels(), NoEvents) {
 		env.dumpPodEvents(testStartTime)
 		env.dumpNodeEvents(testStartTime)

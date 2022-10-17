@@ -28,6 +28,7 @@ import (
 	awsv1alpha1 "github.com/aws/karpenter/pkg/cloudproviders/aws/apis/v1alpha1"
 	"github.com/aws/karpenter/pkg/test"
 	"github.com/aws/karpenter/test/pkg/environment/aws"
+	"github.com/aws/karpenter/test/pkg/environment/common"
 )
 
 var env *aws.Environment
@@ -42,8 +43,9 @@ func TestIPv6(t *testing.T) {
 	RunSpecs(t, "IPv6")
 }
 
-var _ = BeforeEach(func() { env.BeforeEach() })
-var _ = AfterEach(func() { env.AfterEach() })
+var _ = BeforeEach(func() { env.BeforeEach(common.EnableDebug) })
+var _ = AfterEach(func() { env.AfterEach(common.EnableDebug) })
+var _ = AfterEach(func() { env.DumpLogs(common.EnableDebug) })
 
 var _ = Describe("IPv6", func() {
 	It("should provision an IPv6 node by discovering kube-dns IPv6", func() {

@@ -49,13 +49,9 @@ func TestConsolidation(t *testing.T) {
 	RunSpecs(t, "Consolidation")
 }
 
-var _ = BeforeEach(func() {
-	env.BeforeEach(common.EnableDebug)
-})
-
-var _ = AfterEach(func() {
-	env.AfterEach(common.EnableDebug)
-})
+var _ = BeforeEach(func() { env.BeforeEach(common.EnableDebug) })
+var _ = AfterEach(func() { env.AfterEach(common.EnableDebug) })
+var _ = AfterEach(func() { env.DumpLogs(common.EnableDebug) })
 
 var _ = Describe("Consolidation", func() {
 	It("should consolidate nodes (delete)", Label(common.NoWatch), Label(common.NoEvents), func() {

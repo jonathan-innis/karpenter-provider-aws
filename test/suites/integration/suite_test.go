@@ -38,3 +38,4 @@ func TestIntegration(t *testing.T) {
 
 var _ = BeforeEach(func() { env.BeforeEach(common.EnableDebug) })
 var _ = AfterEach(func() { env.AfterEach(common.EnableDebug) })
+var _ = AfterEach(func() { env.DumpLogs(common.EnableDebug) })
