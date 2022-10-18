@@ -31,21 +31,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/aws/karpenter/pkg/operator/injection"
 	"github.com/aws/karpenter/pkg/operator/options"
 )
-
-// Controller is an interface implemented by Karpenter custom resources.
-type Controller interface {
-	// Reconcile hands a hydrated kubernetes resource to the controller for
-	// reconciliation. Any changes made to the resource's status are persisted
-	// after Reconcile returns, even if it returns an error.
-	Reconcile(context.Context, reconcile.Request) (reconcile.Result, error)
-	// Register will register the controller with the manager
-	Register(context.Context, manager.Manager) error
-}
 
 // HealthCheck is an interface for a controller that exposes a LivenessProbe
 type HealthCheck interface {
