@@ -27,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
+	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
 	v1 "k8s.io/api/core/v1"
@@ -56,15 +57,17 @@ type InstanceProvider struct {
 	subnetProvider         *SubnetProvider
 	launchTemplateProvider *LaunchTemplateProvider
 	createFleetBatcher     *CreateFleetBatcher
+	imageCache             *cache.Cache
 }
 
-func NewInstanceProvider(ctx context.Context, ec2api ec2iface.EC2API, instanceTypeProvider *InstanceTypeProvider, subnetProvider *SubnetProvider, launchTemplateProvider *LaunchTemplateProvider) *InstanceProvider {
+func NewInstanceProvider(ctx context.Context, ec2api ec2iface.EC2API, instanceTypeProvider *InstanceTypeProvider, subnetProvider *SubnetProvider, launchTemplateProvider *LaunchTemplateProvider, imageCache *cache.Cache) *InstanceProvider {
 	return &InstanceProvider{
 		ec2api:                 ec2api,
 		instanceTypeProvider:   instanceTypeProvider,
 		subnetProvider:         subnetProvider,
 		launchTemplateProvider: launchTemplateProvider,
 		createFleetBatcher:     NewCreateFleetBatcher(ctx, ec2api),
+		imageCache:             imageCache,
 	}
 }
 
@@ -105,8 +108,19 @@ func (p *InstanceProvider) Create(ctx context.Context, provider *v1alpha1.AWS, n
 		getCapacityType(instance),
 	)
 
+	// TODO: joinnis produce a retry mechanism and check what happens on error
+	out, err := p.ec2api.DescribeImagesWithContext(ctx, &ec2.DescribeImagesInput{
+		ImageIds: []*string{instance.ImageId},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("describing instance image, %w", err)
+	}
+	if len(out.Images) != 1 {
+		return nil, fmt.Errorf("describing instance image, expected 1 image result, got %d", len(out.Images))
+	}
+
 	// Convert Instance to Node
-	return p.instanceToNode(ctx, instance, nodeRequest.InstanceTypeOptions), nil
+	return p.instanceToNode(ctx, instance, out.Images[0], nodeRequest.InstanceTypeOptions), nil
 }
 
 func (p *InstanceProvider) Terminate(ctx context.Context, node *v1.Node) error {
@@ -325,7 +339,7 @@ func (p *InstanceProvider) getInstance(ctx context.Context, id string) (*ec2.Ins
 	return instance, nil
 }
 
-func (p *InstanceProvider) instanceToNode(ctx context.Context, instance *ec2.Instance, instanceTypes []cloudprovider.InstanceType) *v1.Node {
+func (p *InstanceProvider) instanceToNode(ctx context.Context, instance *ec2.Instance, image *ec2.Image, instanceTypes []cloudprovider.InstanceType) *v1.Node {
 	for _, instanceType := range instanceTypes {
 		if instanceType.Name() == aws.StringValue(instance.InstanceType) {
 			nodeName := strings.ToLower(aws.StringValue(instance.PrivateDnsName))
@@ -342,6 +356,7 @@ func (p *InstanceProvider) instanceToNode(ctx context.Context, instance *ec2.Ins
 			labels[v1alpha1.LabelInstanceAMIID] = aws.StringValue(instance.ImageId)
 			labels[v1.LabelTopologyZone] = aws.StringValue(instance.Placement.AvailabilityZone)
 			labels[v1alpha5.LabelCapacityType] = getCapacityType(instance)
+			labels[v1.LabelOSStable] = lo.Ternary(aws.StringValue(image.Platform) == "", string(v1.Linux), string(v1.Windows))
 
 			return &v1.Node{
 				ObjectMeta: metav1.ObjectMeta{
