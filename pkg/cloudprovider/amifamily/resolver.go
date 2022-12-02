@@ -16,7 +16,11 @@ package amifamily
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"net"
+	"strconv"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -24,7 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ssm/ssmiface"
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
-	core "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -36,10 +40,12 @@ import (
 	"github.com/aws/karpenter-core/pkg/utils/pretty"
 )
 
-var DefaultEBS = v1alpha1.BlockDevice{
-	Encrypted:  aws.Bool(true),
-	VolumeType: aws.String(ec2.VolumeTypeGp3),
-	VolumeSize: lo.ToPtr(resource.MustParse("20Gi")),
+func DefaultEBS(quantity resource.Quantity) *v1alpha1.BlockDevice {
+	return &v1alpha1.BlockDevice{
+		Encrypted:  aws.Bool(true),
+		VolumeType: aws.String(ec2.VolumeTypeGp3),
+		VolumeSize: lo.ToPtr(quantity),
+	}
 }
 
 // Resolver is able to fill-in dynamic launch template parameters
@@ -73,11 +79,32 @@ type LaunchTemplate struct {
 	InstanceTypes       []*cloudprovider.InstanceType `hash:"ignore"`
 }
 
+func NewLaunchTemplate(options *Options, amiFamily AMIFamily, kubelet *v1alpha5.KubeletConfiguration, userDataString string,
+	blockDeviceMappings []*v1alpha1.BlockDeviceMapping, metadataOptions *v1alpha1.MetadataOptions, amiID string, taints []v1.Taint,
+	instanceTypes []*cloudprovider.InstanceType) *LaunchTemplate {
+
+	return &LaunchTemplate{
+		Options: options,
+		UserData: amiFamily.UserData(
+			kubelet,
+			taints,
+			options.Labels,
+			options.CABundle,
+			instanceTypes,
+			aws.String(userDataString),
+		),
+		BlockDeviceMappings: blockDeviceMappings,
+		MetadataOptions:     metadataOptions,
+		AMIID:               amiID,
+		InstanceTypes:       instanceTypes,
+	}
+}
+
 // AMIFamily can be implemented to override the default logic for generating dynamic launch template parameters
 type AMIFamily interface {
-	UserData(kubeletConfig *v1alpha5.KubeletConfiguration, taints []core.Taint, labels map[string]string, caBundle *string, instanceTypes []*cloudprovider.InstanceType, customUserData *string) bootstrap.Bootstrapper
+	UserData(kubeletConfig *v1alpha5.KubeletConfiguration, taints []v1.Taint, labels map[string]string, caBundle *string, instanceTypes []*cloudprovider.InstanceType, customUserData *string) bootstrap.Bootstrapper
 	SSMAlias(version string, instanceType *cloudprovider.InstanceType) string
-	DefaultBlockDeviceMappings() []*v1alpha1.BlockDeviceMapping
+	DefaultBlockDeviceMappings(resource.Quantity) []*v1alpha1.BlockDeviceMapping
 	DefaultMetadataOptions() *v1alpha1.MetadataOptions
 	EphemeralBlockDevice() *string
 	FeatureFlags() FeatureFlags
@@ -130,30 +157,61 @@ func (r Resolver) Resolve(ctx context.Context, provider *v1alpha1.AWS, nodeReque
 	}
 	var resolvedTemplates []*LaunchTemplate
 	for amiID, instanceTypes := range amiIDs {
-		resolved := &LaunchTemplate{
-			Options: options,
-			UserData: amiFamily.UserData(
-				nodeRequest.Template.KubeletConfiguration,
-				append(nodeRequest.Template.Taints, nodeRequest.Template.StartupTaints...),
-				options.Labels,
-				options.CABundle,
-				instanceTypes,
-				aws.String(userDataString),
-			),
-			BlockDeviceMappings: provider.BlockDeviceMappings,
-			MetadataOptions:     provider.MetadataOptions,
-			AMIID:               amiID,
-			InstanceTypes:       instanceTypes,
+		metadataOptions := lo.Ternary(provider.MetadataOptions != nil, provider.MetadataOptions, amiFamily.DefaultMetadataOptions())
+		taints := append(nodeRequest.Template.Taints, nodeRequest.Template.StartupTaints...)
+
+		// BlockDeviceMappings will be dynamically provisioned based on instance type buckets; otherwise, use the block
+		// device mappings set by the user
+		if provider.BlockDeviceMappings == nil {
+			// Compute dynamic ephemeral-storage based on overhead and node requests
+			storage := instanceTypes[0].Overhead.Total()[v1.ResourceEphemeralStorage]
+			storage.Add(nodeRequest.Template.Requests[v1.ResourceEphemeralStorage])
+			storage.Add(evictionStorageThreshold(storage, nodeRequest.Template.KubeletConfiguration))
+
+			minSize := resource.MustParse("20Gi")
+			if storage.Value() < minSize.Value() {
+				storage = minSize
+			}
+
+			resolvedTemplates = append(resolvedTemplates, NewLaunchTemplate(options, amiFamily, nodeRequest.Template.KubeletConfiguration, userDataString,
+				amiFamily.DefaultBlockDeviceMappings(storage), metadataOptions, amiID, taints, instanceTypes))
+		} else {
+			resolvedTemplates = append(resolvedTemplates,
+				NewLaunchTemplate(options, amiFamily, nodeRequest.Template.KubeletConfiguration, userDataString,
+					provider.BlockDeviceMappings, metadataOptions, amiID, taints, instanceTypes),
+			)
 		}
-		if resolved.BlockDeviceMappings == nil {
-			resolved.BlockDeviceMappings = amiFamily.DefaultBlockDeviceMappings()
-		}
-		if resolved.MetadataOptions == nil {
-			resolved.MetadataOptions = amiFamily.DefaultMetadataOptions()
-		}
-		resolvedTemplates = append(resolvedTemplates, resolved)
 	}
 	return resolvedTemplates, nil
+}
+
+func evictionStorageThreshold(storage resource.Quantity, kc *v1alpha5.KubeletConfiguration) resource.Quantity {
+	threshold := resource.MustParse(fmt.Sprint(storage.AsApproximateFloat64()/0.9 - storage.AsApproximateFloat64()))
+	if kc == nil {
+		return threshold
+	}
+	if kc.EvictionHard != nil {
+		if v, ok := kc.EvictionHard["nodefs.available"]; ok {
+			if strings.HasSuffix(v, "%") {
+				p := mustParsePercentage(v)
+				threshold = resource.MustParse(fmt.Sprint(storage.AsApproximateFloat64()/100/(1-p) - storage.AsApproximateFloat64()))
+			} else {
+				threshold = resource.MustParse(v)
+			}
+		}
+	}
+	if kc.EvictionSoft != nil {
+		if v, ok := kc.EvictionSoft["nodefs.available"]; ok {
+			if strings.HasSuffix(v, "%") {
+				p := mustParsePercentage(v)
+				threshold = resource.MustParse(fmt.Sprint(math.Max(storage.AsApproximateFloat64()/100/(1-p)-storage.AsApproximateFloat64(), threshold.AsApproximateFloat64())))
+			} else {
+				soft := resource.MustParse(v)
+				threshold = resource.MustParse(fmt.Sprint(math.Max(soft.AsApproximateFloat64(), threshold.AsApproximateFloat64())))
+			}
+		}
+	}
+	return threshold
 }
 
 func GetAMIFamily(amiFamily *string, options *Options) AMIFamily {
@@ -176,4 +234,17 @@ func (o Options) DefaultMetadataOptions() *v1alpha1.MetadataOptions {
 		HTTPPutResponseHopLimit: aws.Int64(2),
 		HTTPTokens:              aws.String(ec2.LaunchTemplateHttpTokensStateRequired),
 	}
+}
+
+func mustParsePercentage(v string) float64 {
+	p, err := strconv.ParseFloat(strings.Trim(v, "%"), 64)
+	if err != nil {
+		panic(fmt.Sprintf("expected percentage value to be a float but got %s, %v", v, err))
+	}
+	// Setting percentage value to 100% is considered disabling the threshold according to
+	// https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/
+	if p == 100 {
+		p = 0
+	}
+	return p
 }

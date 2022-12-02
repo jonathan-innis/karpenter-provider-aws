@@ -55,7 +55,7 @@ func NewInstanceType(ctx context.Context, info *ec2.InstanceTypeInfo, kc *v1alph
 		Name:         aws.StringValue(info.InstanceType),
 		Requirements: computeRequirements(ctx, info, offerings, region, amiFamily, kc),
 		Offerings:    offerings,
-		Capacity:     computeCapacity(ctx, info, amiFamily, provider.BlockDeviceMappings, kc),
+		Capacity:     computeCapacity(ctx, info, amiFamily, kc),
 		Overhead: &cloudprovider.InstanceTypeOverhead{
 			KubeReserved:      kubeReservedResources(cpu(info), pods(ctx, info, amiFamily, kc), eniLimitedPods(info), amiFamily, kc),
 			SystemReserved:    systemReservedResources(kc),
@@ -127,12 +127,12 @@ func getArchitecture(info *ec2.InstanceTypeInfo) string {
 }
 
 func computeCapacity(ctx context.Context, info *ec2.InstanceTypeInfo, amiFamily amifamily.AMIFamily,
-	blockDeviceMappings []*v1alpha1.BlockDeviceMapping, kc *v1alpha5.KubeletConfiguration) v1.ResourceList {
+	kc *v1alpha5.KubeletConfiguration) v1.ResourceList {
 
 	return v1.ResourceList{
 		v1.ResourceCPU:              *cpu(info),
 		v1.ResourceMemory:           *memory(ctx, info),
-		v1.ResourceEphemeralStorage: *ephemeralStorage(amiFamily, blockDeviceMappings),
+		v1.ResourceEphemeralStorage: *ephemeralStorage(),
 		v1.ResourcePods:             *pods(ctx, info, amiFamily, kc),
 		v1alpha1.ResourceAWSPodENI:  *awsPodENI(ctx, aws.StringValue(info.InstanceType)),
 		v1alpha1.ResourceNVIDIAGPU:  *nvidiaGPUs(info),
@@ -153,22 +153,8 @@ func memory(ctx context.Context, info *ec2.InstanceTypeInfo) *resource.Quantity 
 }
 
 // Setting ephemeral-storage to be either the default value or what is defined in blockDeviceMappings
-func ephemeralStorage(amiFamily amifamily.AMIFamily, blockDeviceMappings []*v1alpha1.BlockDeviceMapping) *resource.Quantity {
-	if len(blockDeviceMappings) != 0 {
-		switch amiFamily.(type) {
-		case *amifamily.Custom:
-			return blockDeviceMappings[len(blockDeviceMappings)-1].EBS.VolumeSize
-		default:
-			ephemeralBlockDevice := amiFamily.EphemeralBlockDevice()
-			for _, blockDevice := range blockDeviceMappings {
-				// If a block device mapping exists in the provider for the root volume, set the volume size specified in the provider
-				if *blockDevice.DeviceName == *ephemeralBlockDevice {
-					return blockDevice.EBS.VolumeSize
-				}
-			}
-		}
-	}
-	return amifamily.DefaultEBS.VolumeSize
+func ephemeralStorage() *resource.Quantity {
+	return resources.Quantity("64Ti") // Max EBS volume size (https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/volume_constraints.html)
 }
 
 func awsPodENI(ctx context.Context, name string) *resource.Quantity {
