@@ -22,10 +22,11 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 
+	"github.com/aws/karpenter/pkg/apis/v1alpha1"
+
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 	corecloudprovider "github.com/aws/karpenter-core/pkg/cloudprovider"
 	"github.com/aws/karpenter-core/pkg/test"
-	"github.com/aws/karpenter/pkg/apis/v1alpha1"
 )
 
 const (
@@ -58,7 +59,7 @@ func (c *CloudProvider) Create(_ context.Context, _ *v1alpha5.Machine) (*v1.Node
 	return n, nil
 }
 
-func (c *CloudProvider) GetInstanceTypes(_ context.Context, _ *v1alpha5.Provisioner) ([]*corecloudprovider.InstanceType, error) {
+func (c *CloudProvider) GetInstanceTypes(_ context.Context) ([]*corecloudprovider.InstanceType, error) {
 	if c.InstanceTypes != nil {
 		return c.InstanceTypes, nil
 	}

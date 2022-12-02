@@ -26,20 +26,14 @@ import (
 	awssettings "github.com/aws/karpenter/pkg/apis/config/settings"
 	awscache "github.com/aws/karpenter/pkg/cache"
 	awscontext "github.com/aws/karpenter/pkg/context"
-
-	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
+	"github.com/aws/karpenter/pkg/providers/subnet"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
-	"github.com/mitchellh/hashstructure/v2"
 	"github.com/patrickmn/go-cache"
-	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"knative.dev/pkg/logging"
-
-	"github.com/aws/karpenter/pkg/apis/v1alpha1"
-	"github.com/aws/karpenter/pkg/providers/subnet"
 
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
 	"github.com/aws/karpenter-core/pkg/utils/functional"
@@ -47,9 +41,9 @@ import (
 )
 
 const (
-	InstanceTypesCacheKey           = "types"
-	InstanceTypeZonesCacheKeyPrefix = "zones:"
-	InstanceTypesAndZonesCacheTTL   = 5 * time.Minute
+	InstanceTypesCacheKey         = "types"
+	InstanceTypeZonesCacheKey     = "zones"
+	InstanceTypesAndZonesCacheTTL = 5 * time.Minute
 )
 
 type InstanceTypeProvider struct {
@@ -86,7 +80,8 @@ func NewInstanceTypeProvider(ctx context.Context, sess *session.Session, ec2api 
 	}
 }
 
-func (p *InstanceTypeProvider) List(ctx context.Context, kc *v1alpha5.KubeletConfiguration, nodeTemplate *v1alpha1.AWSNodeTemplate) ([]*cloudprovider.InstanceType, error) {
+// Get all instance type options
+func (p *InstanceTypeProvider) List(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
 	p.Lock()
 	defer p.Unlock()
 	// Get InstanceTypes from EC2
@@ -95,7 +90,7 @@ func (p *InstanceTypeProvider) List(ctx context.Context, kc *v1alpha5.KubeletCon
 		return nil, err
 	}
 	// Get Viable EC2 Purchase offerings
-	instanceTypeZones, err := p.getInstanceTypeZones(ctx, nodeTemplate)
+	instanceTypeZones, err := p.getInstanceTypeZones(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +98,7 @@ func (p *InstanceTypeProvider) List(ctx context.Context, kc *v1alpha5.KubeletCon
 
 	for _, i := range instanceTypes {
 		instanceTypeName := aws.StringValue(i.InstanceType)
-		instanceType := NewInstanceType(ctx, i, kc, p.region, nodeTemplate, p.createOfferings(ctx, i, instanceTypeZones[instanceTypeName]))
+		instanceType := NewInstanceType(ctx, i, p.region, p.createOfferings(ctx, i, instanceTypeZones[instanceTypeName]))
 		result = append(result, instanceType)
 	}
 	return result, nil
@@ -123,7 +118,7 @@ func (p *InstanceTypeProvider) LivenessProbe(req *http.Request) error {
 }
 
 func (p *InstanceTypeProvider) createOfferings(ctx context.Context, instanceType *ec2.InstanceTypeInfo, zones sets.String) []cloudprovider.Offering {
-	offerings := []cloudprovider.Offering{}
+	var offerings []cloudprovider.Offering
 	for zone := range zones {
 		// while usage classes should be a distinct set, there's no guarantee of that
 		for capacityType := range sets.NewString(aws.StringValueSlice(instanceType.SupportedUsageClasses)...) {
@@ -152,45 +147,27 @@ func (p *InstanceTypeProvider) createOfferings(ctx context.Context, instanceType
 	return offerings
 }
 
-func (p *InstanceTypeProvider) getInstanceTypeZones(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate) (map[string]sets.String, error) {
-	subnetSelectorHash, err := hashstructure.Hash(nodeTemplate.Spec.SubnetSelector, hashstructure.FormatV2, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash the subnet selector: %w", err)
-	}
-	cacheKey := fmt.Sprintf("%s%016x", InstanceTypeZonesCacheKeyPrefix, subnetSelectorHash)
-	if cached, ok := p.cache.Get(cacheKey); ok {
+// TODO: constrain by zones during the create call, not during getting the InstanceTypes
+func (p *InstanceTypeProvider) getInstanceTypeZones(ctx context.Context) (map[string]sets.String, error) {
+	if cached, ok := p.cache.Get(InstanceTypeZonesCacheKey); ok {
 		return cached.(map[string]sets.String), nil
 	}
-
-	// Constrain AZs from subnets
-	subnets, err := p.subnetProvider.List(ctx, nodeTemplate)
-	if err != nil {
-		return nil, err
-	}
-	zones := sets.NewString(lo.Map(subnets, func(subnet *ec2.Subnet, _ int) string {
-		return aws.StringValue(subnet.AvailabilityZone)
-	})...)
 
 	// Get offerings from EC2
 	instanceTypeZones := map[string]sets.String{}
 	if err := p.ec2api.DescribeInstanceTypeOfferingsPagesWithContext(ctx, &ec2.DescribeInstanceTypeOfferingsInput{LocationType: aws.String("availability-zone")},
 		func(output *ec2.DescribeInstanceTypeOfferingsOutput, lastPage bool) bool {
 			for _, offering := range output.InstanceTypeOfferings {
-				if zones.Has(aws.StringValue(offering.Location)) {
-					if _, ok := instanceTypeZones[aws.StringValue(offering.InstanceType)]; !ok {
-						instanceTypeZones[aws.StringValue(offering.InstanceType)] = sets.NewString()
-					}
-					instanceTypeZones[aws.StringValue(offering.InstanceType)].Insert(aws.StringValue(offering.Location))
+				if _, ok := instanceTypeZones[aws.StringValue(offering.InstanceType)]; !ok {
+					instanceTypeZones[aws.StringValue(offering.InstanceType)] = sets.NewString()
 				}
+				instanceTypeZones[aws.StringValue(offering.InstanceType)].Insert(aws.StringValue(offering.Location))
 			}
 			return true
 		}); err != nil {
 		return nil, fmt.Errorf("describing instance type zone offerings, %w", err)
 	}
-	if p.cm.HasChanged("zonal-offerings", nodeTemplate.Spec.SubnetSelector) {
-		logging.FromContext(ctx).With("subnet-selector", pretty.Concise(nodeTemplate.Spec.SubnetSelector)).Debugf("discovered EC2 instance types zonal offerings for subnets")
-	}
-	p.cache.SetDefault(cacheKey, instanceTypeZones)
+	p.cache.SetDefault(InstanceTypeZonesCacheKey, instanceTypeZones)
 	return instanceTypeZones, nil
 }
 

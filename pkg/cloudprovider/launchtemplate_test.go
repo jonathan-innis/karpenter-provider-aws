@@ -627,11 +627,11 @@ var _ = Describe("LaunchTemplates", func() {
 		})
 	})
 	Context("AL2", func() {
-		It("should calculate memory overhead based on eni limited pods when ENI limited", func() {
+		FIt("should calculate memory overhead based on eni limited pods when ENI limited", func() {
 			settingsStore = coretest.SettingsStore{
 				settings.ContextKey: test.Settings(),
 				awssettings.ContextKey: test.Settings(test.SettingOptions{
-					EnableENILimitedPodDensity: lo.ToPtr(false),
+					EnableENILimitedPodDensity: lo.ToPtr(true),
 					VMMemoryOverheadPercent:    lo.ToPtr[float64](0),
 				}),
 			}
@@ -640,7 +640,7 @@ var _ = Describe("LaunchTemplates", func() {
 			nodeTemplate.Spec.AMIFamily = &v1alpha1.AMIFamilyAL2
 			instanceInfo, err := instanceTypeProvider.getInstanceTypes(ctx)
 			Expect(err).To(BeNil())
-			it := NewInstanceType(ctx, instanceInfo["m5.xlarge"], provisioner.Spec.KubeletConfiguration, "", nodeTemplate, nil)
+			it := NewInstanceType(ctx, instanceInfo["m5.xlarge"], "", nil)
 			overhead := it.Overhead.Total()
 			Expect(overhead.Memory().String()).To(Equal("1093Mi"))
 		})
@@ -657,7 +657,7 @@ var _ = Describe("LaunchTemplates", func() {
 			nodeTemplate.Spec.AMIFamily = &v1alpha1.AMIFamilyAL2
 			instanceInfo, err := instanceTypeProvider.getInstanceTypes(ctx)
 			Expect(err).To(BeNil())
-			it := NewInstanceType(ctx, instanceInfo["m5.xlarge"], provisioner.Spec.KubeletConfiguration, "", nodeTemplate, nil)
+			it := NewInstanceType(ctx, instanceInfo["m5.xlarge"], "", nil)
 			overhead := it.Overhead.Total()
 			Expect(overhead.Memory().String()).To(Equal("1093Mi"))
 		})
@@ -676,7 +676,7 @@ var _ = Describe("LaunchTemplates", func() {
 			nodeTemplate.Spec.AMIFamily = &v1alpha1.AMIFamilyBottlerocket
 			instanceInfo, err := instanceTypeProvider.getInstanceTypes(ctx)
 			Expect(err).To(BeNil())
-			it := NewInstanceType(ctx, instanceInfo["m5.xlarge"], provisioner.Spec.KubeletConfiguration, "", nodeTemplate, nil)
+			it := NewInstanceType(ctx, instanceInfo["m5.xlarge"], "", nil)
 			overhead := it.Overhead.Total()
 			Expect(overhead.Memory().String()).To(Equal("1093Mi"))
 		})
@@ -693,7 +693,7 @@ var _ = Describe("LaunchTemplates", func() {
 			nodeTemplate.Spec.AMIFamily = &v1alpha1.AMIFamilyBottlerocket
 			instanceInfo, err := instanceTypeProvider.getInstanceTypes(ctx)
 			Expect(err).To(BeNil())
-			it := NewInstanceType(ctx, instanceInfo["m5.xlarge"], provisioner.Spec.KubeletConfiguration, "", nodeTemplate, nil)
+			it := NewInstanceType(ctx, instanceInfo["m5.xlarge"], "", nil)
 			overhead := it.Overhead.Total()
 			Expect(overhead.Memory().String()).To(Equal("1665Mi"))
 		})

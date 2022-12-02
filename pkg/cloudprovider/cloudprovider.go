@@ -25,8 +25,8 @@ import (
 
 	"github.com/aws/karpenter/pkg/apis"
 	"github.com/aws/karpenter/pkg/apis/v1alpha1"
-	securitygroup "github.com/aws/karpenter/pkg/providers/securitygroup"
-	subnet "github.com/aws/karpenter/pkg/providers/subnet"
+	"github.com/aws/karpenter/pkg/providers/securitygroup"
+	"github.com/aws/karpenter/pkg/providers/subnet"
 	"github.com/aws/karpenter/pkg/utils"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -156,17 +156,8 @@ func (c *CloudProvider) LivenessProbe(req *http.Request) error {
 }
 
 // GetInstanceTypes returns all available InstanceTypes
-func (c *CloudProvider) GetInstanceTypes(ctx context.Context, provisioner *v1alpha5.Provisioner) ([]*cloudprovider.InstanceType, error) {
-	var rawProvider []byte
-	if provisioner.Spec.Provider != nil {
-		rawProvider = provisioner.Spec.Provider.Raw
-	}
-	nodeTemplate, err := c.resolveNodeTemplate(ctx, rawProvider, provisioner.Spec.ProviderRef)
-	if err != nil {
-		return nil, err
-	}
-	// TODO, break this coupling
-	instanceTypes, err := c.instanceTypeProvider.List(ctx, provisioner.Spec.KubeletConfiguration, nodeTemplate)
+func (c *CloudProvider) GetInstanceTypes(ctx context.Context) ([]*cloudprovider.InstanceType, error) {
+	instanceTypes, err := c.instanceTypeProvider.List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +181,7 @@ func (c *CloudProvider) IsMachineDrifted(ctx context.Context, machine *v1alpha5.
 	if err != nil {
 		return false, k8sClient.IgnoreNotFound(fmt.Errorf("resolving node template, %w", err))
 	}
-	amiDrifted, err := c.isAMIDrifted(ctx, machine, provisioner, nodeTemplate)
+	amiDrifted, err := c.isAMIDrifted(ctx, machine, nodeTemplate)
 	if err != nil {
 		return false, err
 	}
@@ -233,8 +224,8 @@ func kubeDNSIP(ctx context.Context, kubernetesInterface kubernetes.Interface) (n
 	return kubeDNSIP, nil
 }
 
-func (c *CloudProvider) isAMIDrifted(ctx context.Context, machine *v1alpha5.Machine, provisioner *v1alpha5.Provisioner, nodeTemplate *v1alpha1.AWSNodeTemplate) (bool, error) {
-	instanceTypes, err := c.GetInstanceTypes(ctx, provisioner)
+func (c *CloudProvider) isAMIDrifted(ctx context.Context, machine *v1alpha5.Machine, nodeTemplate *v1alpha1.AWSNodeTemplate) (bool, error) {
+	instanceTypes, err := c.GetInstanceTypes(ctx)
 	if err != nil {
 		return false, fmt.Errorf("getting instanceTypes, %w", err)
 	}
@@ -281,15 +272,7 @@ func (c *CloudProvider) resolveNodeTemplate(ctx context.Context, raw []byte, obj
 }
 
 func (c *CloudProvider) resolveInstanceTypes(ctx context.Context, machine *v1alpha5.Machine) ([]*cloudprovider.InstanceType, error) {
-	provisionerName, ok := machine.Labels[v1alpha5.ProvisionerNameLabelKey]
-	if !ok {
-		return nil, fmt.Errorf("finding provisioner owner")
-	}
-	provisioner := &v1alpha5.Provisioner{}
-	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: provisionerName}, provisioner); err != nil {
-		return nil, fmt.Errorf("getting provisioner owner, %w", err)
-	}
-	instanceTypes, err := c.GetInstanceTypes(ctx, provisioner)
+	instanceTypes, err := c.GetInstanceTypes(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting instance types, %w", err)
 	}

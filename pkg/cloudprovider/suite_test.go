@@ -297,7 +297,7 @@ var _ = Describe("Allocation", func() {
 				Images: []*ec2.Image{{ImageId: aws.String(validAMI)}},
 			})
 			ExpectApplied(ctx, env.Client, provisioner, nodeTemplate)
-			instanceTypes, err := cloudProvider.GetInstanceTypes(ctx, provisioner)
+			instanceTypes, err := cloudProvider.GetInstanceTypes(ctx)
 			Expect(err).ToNot(HaveOccurred())
 			selectedInstanceType = instanceTypes[0]
 
