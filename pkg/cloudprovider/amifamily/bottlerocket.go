@@ -17,8 +17,6 @@ package amifamily
 import (
 	"fmt"
 
-	"github.com/samber/lo"
-
 	"github.com/aws/karpenter/pkg/cloudprovider/amifamily/bootstrap"
 
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
@@ -68,17 +66,15 @@ func (b Bottlerocket) UserData(kubeletConfig *v1alpha5.KubeletConfiguration, tai
 }
 
 // DefaultBlockDeviceMappings returns the default block device mappings for the AMI Family
-func (b Bottlerocket) DefaultBlockDeviceMappings() []*v1alpha1.BlockDeviceMapping {
-	xvdaEBS := DefaultEBS
-	xvdaEBS.VolumeSize = lo.ToPtr(resource.MustParse("4Gi"))
+func (b Bottlerocket) DefaultBlockDeviceMappings(storage resource.Quantity) []*v1alpha1.BlockDeviceMapping {
 	return []*v1alpha1.BlockDeviceMapping{
 		{
 			DeviceName: aws.String("/dev/xvda"),
-			EBS:        &xvdaEBS,
+			EBS:        DefaultEBS(resource.MustParse("4Gi")),
 		},
 		{
 			DeviceName: b.EphemeralBlockDevice(),
-			EBS:        &DefaultEBS,
+			EBS:        DefaultEBS(storage),
 		},
 	}
 }

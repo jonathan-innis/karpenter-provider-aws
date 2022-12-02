@@ -17,6 +17,7 @@ package amifamily
 import (
 	"context"
 	"net"
+	"sort"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -24,10 +25,11 @@ import (
 	"github.com/aws/aws-sdk-go/service/ssm/ssmiface"
 	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
-	core "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/aws/karpenter-core/pkg/utils/functional"
 	"github.com/aws/karpenter/pkg/apis/v1alpha1"
 	"github.com/aws/karpenter/pkg/cloudprovider/amifamily/bootstrap"
 
@@ -36,10 +38,12 @@ import (
 	"github.com/aws/karpenter-core/pkg/utils/pretty"
 )
 
-var DefaultEBS = v1alpha1.BlockDevice{
-	Encrypted:  aws.Bool(true),
-	VolumeType: aws.String(ec2.VolumeTypeGp3),
-	VolumeSize: lo.ToPtr(resource.MustParse("20Gi")),
+func DefaultEBS(quantity resource.Quantity) *v1alpha1.BlockDevice {
+	return &v1alpha1.BlockDevice{
+		Encrypted:  aws.Bool(true),
+		VolumeType: aws.String(ec2.VolumeTypeGp3),
+		VolumeSize: lo.ToPtr(quantity),
+	}
 }
 
 // Resolver is able to fill-in dynamic launch template parameters
@@ -73,11 +77,32 @@ type LaunchTemplate struct {
 	InstanceTypes       []*cloudprovider.InstanceType `hash:"ignore"`
 }
 
+func NewLaunchTemplate(options *Options, amiFamily AMIFamily, kubelet *v1alpha5.KubeletConfiguration, userDataString string,
+	blockDeviceMappings []*v1alpha1.BlockDeviceMapping, metadataOptions *v1alpha1.MetadataOptions, amiID string, taints []v1.Taint,
+	instanceTypes []*cloudprovider.InstanceType) *LaunchTemplate {
+
+	return &LaunchTemplate{
+		Options: options,
+		UserData: amiFamily.UserData(
+			kubelet,
+			taints,
+			options.Labels,
+			options.CABundle,
+			instanceTypes,
+			aws.String(userDataString),
+		),
+		BlockDeviceMappings: blockDeviceMappings,
+		MetadataOptions:     metadataOptions,
+		AMIID:               amiID,
+		InstanceTypes:       instanceTypes,
+	}
+}
+
 // AMIFamily can be implemented to override the default logic for generating dynamic launch template parameters
 type AMIFamily interface {
-	UserData(kubeletConfig *v1alpha5.KubeletConfiguration, taints []core.Taint, labels map[string]string, caBundle *string, instanceTypes []*cloudprovider.InstanceType, customUserData *string) bootstrap.Bootstrapper
+	UserData(kubeletConfig *v1alpha5.KubeletConfiguration, taints []v1.Taint, labels map[string]string, caBundle *string, instanceTypes []*cloudprovider.InstanceType, customUserData *string) bootstrap.Bootstrapper
 	SSMAlias(version string, instanceType *cloudprovider.InstanceType) string
-	DefaultBlockDeviceMappings() []*v1alpha1.BlockDeviceMapping
+	DefaultBlockDeviceMappings(resource.Quantity) []*v1alpha1.BlockDeviceMapping
 	DefaultMetadataOptions() *v1alpha1.MetadataOptions
 	EphemeralBlockDevice() *string
 	FeatureFlags() FeatureFlags
@@ -130,30 +155,64 @@ func (r Resolver) Resolve(ctx context.Context, provider *v1alpha1.AWS, nodeReque
 	}
 	var resolvedTemplates []*LaunchTemplate
 	for amiID, instanceTypes := range amiIDs {
-		resolved := &LaunchTemplate{
-			Options: options,
-			UserData: amiFamily.UserData(
-				nodeRequest.Template.KubeletConfiguration,
-				append(nodeRequest.Template.Taints, nodeRequest.Template.StartupTaints...),
-				options.Labels,
-				options.CABundle,
-				instanceTypes,
-				aws.String(userDataString),
-			),
-			BlockDeviceMappings: provider.BlockDeviceMappings,
-			MetadataOptions:     provider.MetadataOptions,
-			AMIID:               amiID,
-			InstanceTypes:       instanceTypes,
+		metadataOptions := lo.Ternary(provider.MetadataOptions != nil, provider.MetadataOptions, amiFamily.DefaultMetadataOptions())
+		taints := append(nodeRequest.Template.Taints, nodeRequest.Template.StartupTaints...)
+
+		// BlockDeviceMappings will be dynamically provisioned based on instance type buckets; otherwise, use the block
+		// device mappings set by the user
+		if provider.BlockDeviceMappings == nil {
+			buckets := computeEphemeralStorageBuckets(nodeRequest, instanceTypes)
+			for _, bucket := range buckets {
+				resolvedTemplates = append(resolvedTemplates, NewLaunchTemplate(options, amiFamily, nodeRequest.Template.KubeletConfiguration, userDataString,
+					amiFamily.DefaultBlockDeviceMappings(bucket.First), metadataOptions, amiID, taints, bucket.Second))
+			}
+		} else {
+			resolvedTemplates = append(resolvedTemplates,
+				NewLaunchTemplate(options, amiFamily, nodeRequest.Template.KubeletConfiguration, userDataString,
+					provider.BlockDeviceMappings, metadataOptions, amiID, taints, instanceTypes),
+			)
 		}
-		if resolved.BlockDeviceMappings == nil {
-			resolved.BlockDeviceMappings = amiFamily.DefaultBlockDeviceMappings()
-		}
-		if resolved.MetadataOptions == nil {
-			resolved.MetadataOptions = amiFamily.DefaultMetadataOptions()
-		}
-		resolvedTemplates = append(resolvedTemplates, resolved)
 	}
 	return resolvedTemplates, nil
+}
+
+// computeEphemeralStorageBuckets partitions the ephemeral-requests from all instance types into buckets to reduce
+// the number of launchTemplates we need to create due to the differing blockDeviceMappings
+// This is a statically defined value right now
+func computeEphemeralStorageBuckets(nodeRequest *cloudprovider.NodeRequest, instanceTypes []*cloudprovider.InstanceType) []functional.Pair[resource.Quantity, []*cloudprovider.InstanceType] {
+	ephemeralStorageRequests := lo.Map(instanceTypes, func(it *cloudprovider.InstanceType, _ int) functional.Pair[resource.Quantity, *cloudprovider.InstanceType] {
+		quantity := resource.MustParse("0")
+		quantity.Add(it.Overhead.Total()[v1.ResourceEphemeralStorage])
+		quantity.Add(nodeRequest.Template.Requests[v1.ResourceEphemeralStorage])
+		return functional.Pair[resource.Quantity, *cloudprovider.InstanceType]{First: quantity, Second: it}
+	})
+	sort.Slice(ephemeralStorageRequests, func(i, j int) bool {
+		return ephemeralStorageRequests[i].First.AsApproximateFloat64() > ephemeralStorageRequests[j].First.AsApproximateFloat64()
+	})
+	var buckets []functional.Pair[resource.Quantity, []*cloudprovider.InstanceType]
+	currentBucket := 0
+	for i, request := range ephemeralStorageRequests {
+		if i == 0 {
+			buckets = append(buckets, functional.Pair[resource.Quantity, []*cloudprovider.InstanceType]{
+				First:  request.First,
+				Second: []*cloudprovider.InstanceType{request.Second},
+			})
+			continue
+		}
+		copied := buckets[currentBucket].First.DeepCopy()
+		copied.Sub(request.First)
+		maxDelta := resource.MustParse("10Gi")
+		if copied.AsApproximateFloat64() > maxDelta.AsApproximateFloat64() {
+			buckets = append(buckets, functional.Pair[resource.Quantity, []*cloudprovider.InstanceType]{
+				First:  request.First,
+				Second: []*cloudprovider.InstanceType{request.Second},
+			})
+			currentBucket++
+		} else {
+			buckets[currentBucket].Second = append(buckets[currentBucket].Second, request.Second)
+		}
+	}
+	return buckets
 }
 
 func GetAMIFamily(amiFamily *string, options *Options) AMIFamily {
