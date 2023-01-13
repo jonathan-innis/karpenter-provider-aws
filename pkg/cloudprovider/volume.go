@@ -4,8 +4,13 @@ import (
 	"fmt"
 
 	"github.com/avast/retry-go"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
+	"github.com/samber/lo"
+
+	"github.com/aws/karpenter/pkg/apis/v1alpha1"
+	"github.com/aws/karpenter/pkg/cloudprovider/amifamily"
 )
 
 type VolumeProvider struct {
@@ -20,14 +25,23 @@ func NewVolumeProvider(ec2api ec2iface.EC2API) *VolumeProvider {
 
 // GetEphemeralVolume retrieves the first blockDeviceMapping volume from the instance, which we assume
 // to be the ephemeral volume for the node
-func (p *VolumeProvider) GetEphemeralVolume(instance *ec2.Instance) (*ec2.Volume, error) {
+func (p *VolumeProvider) GetEphemeralVolume(nodeTemplate *v1alpha1.AWSNodeTemplate, instance *ec2.Instance) (*ec2.Volume, error) {
 	var volume *ec2.Volume
-	if len(instance.BlockDeviceMappings) == 0 || instance.BlockDeviceMappings[0].Ebs == nil {
+	if len(instance.BlockDeviceMappings) == 0 {
 		return nil, fmt.Errorf("no block device mapping exists")
+	}
+	ephemeralBlockDevice, found := lo.Find(instance.BlockDeviceMappings, func(m *ec2.InstanceBlockDeviceMapping) bool {
+		return aws.StringValue(m.DeviceName) == amifamily.GetAMIFamily(nodeTemplate.Spec.AMIFamily, &amifamily.Options{}).EphemeralBlockDevice()
+	})
+	if !found {
+		ephemeralBlockDevice = instance.BlockDeviceMappings[0]
+	}
+	if ephemeralBlockDevice.Ebs == nil {
+		return nil, fmt.Errorf("failed to find volume specification on block device")
 	}
 	if err := retry.Do(func() error {
 		out, err := p.ec2api.DescribeVolumes(&ec2.DescribeVolumesInput{
-			VolumeIds: []*string{instance.BlockDeviceMappings[0].Ebs.VolumeId},
+			VolumeIds: []*string{ephemeralBlockDevice.Ebs.VolumeId},
 		})
 		if err != nil {
 			return fmt.Errorf("getting instance volumes, %w", err)

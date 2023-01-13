@@ -128,7 +128,10 @@ func (p *AMIProvider) Get(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTem
 					if _, ok := amiMapping[aws.StringValue(ami.ImageId)]; ok {
 						amiMapping[aws.StringValue(ami.ImageId)].InstanceTypes = append(amiMapping[aws.StringValue(ami.ImageId)].InstanceTypes, instanceType)
 					} else {
-						amiMapping[aws.StringValue(ami.ImageId)].BlockDeviceMappings = lo.Map(ami.BlockDeviceMappings, func(m *ec2.BlockDeviceMapping, _ int) *v1alpha1.BlockDeviceMapping { return newBlockDeviceMapping(m) })
+						amiMapping[aws.StringValue(ami.ImageId)] = &MappingData{
+							BlockDeviceMappings: lo.Map(ami.BlockDeviceMappings, func(m *ec2.BlockDeviceMapping, _ int) *v1alpha1.BlockDeviceMapping { return newBlockDeviceMapping(m) }),
+							InstanceTypes:       []*cloudprovider.InstanceType{instanceType},
+						}
 					}
 					break
 				}
@@ -154,7 +157,10 @@ func (p *AMIProvider) Get(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTem
 			if _, ok := amiMapping[aws.StringValue(amis[0].ImageId)]; ok {
 				amiMapping[aws.StringValue(amis[0].ImageId)].InstanceTypes = append(amiMapping[aws.StringValue(amis[0].ImageId)].InstanceTypes, instanceType)
 			} else {
-				amiMapping[aws.StringValue(amis[0].ImageId)].BlockDeviceMappings = lo.Map(amis[0].BlockDeviceMappings, func(m *ec2.BlockDeviceMapping, _ int) *v1alpha1.BlockDeviceMapping { return newBlockDeviceMapping(m) })
+				amiMapping[aws.StringValue(amis[0].ImageId)] = &MappingData{
+					BlockDeviceMappings: lo.Map(amis[0].BlockDeviceMappings, func(m *ec2.BlockDeviceMapping, _ int) *v1alpha1.BlockDeviceMapping { return newBlockDeviceMapping(m) }),
+					InstanceTypes:       []*cloudprovider.InstanceType{instanceType},
+				}
 			}
 		}
 	}
@@ -275,8 +281,8 @@ func newBlockDeviceMapping(in *ec2.BlockDeviceMapping) *v1alpha1.BlockDeviceMapp
 			KMSKeyID:            in.Ebs.KmsKeyId,
 			SnapshotID:          in.Ebs.SnapshotId,
 			Throughput:          in.Ebs.Throughput,
-			VolumeSize:          lo.ToPtr(resource.MustParse(fmt.Sprintf("%dGi", in.Ebs.VolumeSize))),
-			VolumeType:          in.Ebs.VolumeType,
+			VolumeSize:          lo.ToPtr(resource.MustParse(fmt.Sprintf("%dGi", aws.Int64Value(in.Ebs.VolumeSize)))),
+			VolumeType:          lo.Ternary(aws.StringValue(in.Ebs.VolumeType) == "gp2", aws.String("gp3"), in.Ebs.VolumeType), // Default to GP3 if image is GP2
 		}
 	}
 	return ret

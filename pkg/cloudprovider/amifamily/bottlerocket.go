@@ -61,3 +61,7 @@ func (b Bottlerocket) UserData(kubeletConfig *v1alpha5.KubeletConfiguration, tai
 		},
 	}
 }
+
+func (b Bottlerocket) EphemeralBlockDevice() string {
+	return "/dev/xvdb"
+}

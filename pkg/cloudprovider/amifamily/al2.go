@@ -83,3 +83,7 @@ func (a AL2) defaultIPv6DNS(kubeletConfig *v1alpha5.KubeletConfiguration) *v1alp
 	newKubeletConfig.ClusterDNS = []string{a.KubeDNSIP.String()}
 	return newKubeletConfig
 }
+
+func (a AL2) EphemeralBlockDevice() string {
+	return "/dev/xvda"
+}

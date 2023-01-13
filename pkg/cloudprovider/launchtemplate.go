@@ -229,6 +229,10 @@ func (p *LaunchTemplateProvider) createLaunchTemplate(ctx context.Context, optio
 }
 
 func (p *LaunchTemplateProvider) blockDeviceMappings(blockDeviceMappings []*v1alpha1.BlockDeviceMapping) []*ec2.LaunchTemplateBlockDeviceMappingRequest {
+	// Filter out blockDeviceMappings that don't have EBS details or a size for the volume
+	blockDeviceMappings = lo.Filter(blockDeviceMappings, func(b *v1alpha1.BlockDeviceMapping, _ int) bool {
+		return b.EBS != nil && b.EBS.VolumeSize != nil
+	})
 	return lo.Map(blockDeviceMappings, func(m *v1alpha1.BlockDeviceMapping, _ int) *ec2.LaunchTemplateBlockDeviceMappingRequest {
 		return &ec2.LaunchTemplateBlockDeviceMappingRequest{
 			DeviceName: m.DeviceName,

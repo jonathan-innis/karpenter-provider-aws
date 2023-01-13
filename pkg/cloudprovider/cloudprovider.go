@@ -147,11 +147,11 @@ func (c *CloudProvider) Create(ctx context.Context, machine *v1alpha5.Machine) (
 	if err != nil {
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}
-	volume, err := c.volumeProvider.GetEphemeralVolume(instance)
+	volume, err := c.volumeProvider.GetEphemeralVolume(nodeTemplate, instance)
 	if err != nil {
-		// If we fail to get the volume, rather than failing outright, we fallback to assuming 20Gi for inflight
-		logging.FromContext(ctx).Errorf("retrieving instance volume, falling back to 20Gi volume for inflight, %s", err)
-		volume = &ec2.Volume{Size: aws.Int64(20)}
+		// If we fail to get the volume, rather than failing outright, we assume that we have "infinite" until the resource registers
+		logging.FromContext(ctx).Errorf("retrieving instance volume, %s", err)
+		volume = &ec2.Volume{Size: aws.Int64(65536)}
 	}
 	return c.instanceToNode(ctx, instance, volume, instanceTypes), nil
 }
@@ -304,7 +304,7 @@ func (c *CloudProvider) instanceToNode(ctx context.Context, instance *ec2.Instan
 				}
 			}
 			labels[v1alpha1.LabelInstanceAMIID] = aws.StringValue(instance.ImageId)
-			labels[v1alpha1.LabelVolumeSize] = fmt.Sprint(aws.Int64Value(volume.Size))
+			labels[v1alpha1.LabelVolumeSize] = fmt.Sprintf("%dGi", aws.Int64Value(volume.Size))
 			labels[v1.LabelTopologyZone] = aws.StringValue(instance.Placement.AvailabilityZone)
 			labels[v1alpha5.LabelCapacityType] = getCapacityType(instance)
 

@@ -90,6 +90,7 @@ type AMIFamily interface {
 	SSMAlias(version string, instanceType *cloudprovider.InstanceType) string
 	UserData(kubeletConfig *v1alpha5.KubeletConfiguration, taints []core.Taint, labels map[string]string, caBundle *string, instanceTypes []*cloudprovider.InstanceType, customUserData *string) bootstrap.Bootstrapper
 	DefaultMetadataOptions() *v1alpha1.MetadataOptions
+	EphemeralBlockDevice() string
 }
 
 // New constructs a new launch template Resolver
@@ -116,13 +117,22 @@ func (r Resolver) Resolve(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTem
 		metadataOptions := lo.Ternary(nodeTemplate.Spec.MetadataOptions != nil, nodeTemplate.Spec.MetadataOptions, amiFamily.DefaultMetadataOptions())
 		taints := append(machine.Spec.Taints, machine.Spec.StartupTaints...)
 
-		var blockDeviceMappings []*v1alpha1.BlockDeviceMapping
 		minEphemeralStorage := resource.MustParse("20Gi") // We need at least this much storage to be able to store the image/snapshot
-		if len(nodeTemplate.Spec.BlockDeviceMappings) == 0 {
-			blockDeviceMappings = mappingData.BlockDeviceMappings
+
+		blockDeviceMappings := mappingData.BlockDeviceMappings
+		if len(nodeTemplate.Spec.BlockDeviceMappings) > 0 {
+			blockDeviceMappings = nodeTemplate.Spec.BlockDeviceMappings
+		}
+		ephemeralBlockDevice, found := lo.Find(blockDeviceMappings, func(m *v1alpha1.BlockDeviceMapping) bool {
+			return aws.StringValue(m.DeviceName) == amiFamily.EphemeralBlockDevice()
+		})
+		if !found {
+			ephemeralBlockDevice = blockDeviceMappings[0]
 		}
 		// Either provision the volume size to be what was requested or have it be what is needed to run all the resource requests
-		blockDeviceMappings[0].EBS.VolumeSize = lo.ToPtr(resources.Max(minEphemeralStorage, *blockDeviceMappings[0].EBS.VolumeSize, neededEphemeralStorage(machine.Spec.Resources.Requests[core.ResourceEphemeralStorage], machine.Spec.Kubelet)))
+		ephemeralBlockDevice.EBS.VolumeSize = lo.ToPtr(resources.Max(minEphemeralStorage, *ephemeralBlockDevice.EBS.VolumeSize, neededEphemeralStorage(machine.Spec.Resources.Requests[core.ResourceEphemeralStorage], machine.Spec.Kubelet)))
+		neededSize := resources.Max(minEphemeralStorage, *ephemeralBlockDevice.EBS.VolumeSize, neededEphemeralStorage(machine.Spec.Resources.Requests[core.ResourceEphemeralStorage], machine.Spec.Kubelet))
+		fmt.Println(neededSize.String())
 
 		templates = append(templates, NewLaunchTemplate(options, amiFamily, machine.Spec.Kubelet, lo.FromPtr(nodeTemplate.Spec.UserData),
 			blockDeviceMappings, metadataOptions, id, taints, mappingData.InstanceTypes))

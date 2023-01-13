@@ -95,7 +95,16 @@ func (p *InstanceProvider) Create(ctx context.Context, nodeTemplate *v1alpha1.AW
 	// Get Instance with backoff retry since EC2 is eventually consistent
 	instance := &ec2.Instance{}
 	if err := retry.Do(
-		func() (err error) { instance, err = p.Get(ctx, aws.StringValue(id)); return err },
+		func() error {
+			instance, err = p.Get(ctx, aws.StringValue(id))
+			if err != nil {
+				return err
+			}
+			if len(instance.BlockDeviceMappings) == 0 {
+				return fmt.Errorf("blockDeviceMappings not found")
+			}
+			return nil
+		},
 		retry.Delay(1*time.Second),
 		retry.Attempts(6),
 		retry.LastErrorOnly(true),

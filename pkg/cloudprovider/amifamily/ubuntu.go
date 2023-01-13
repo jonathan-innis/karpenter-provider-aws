@@ -49,3 +49,7 @@ func (u Ubuntu) UserData(kubeletConfig *v1alpha5.KubeletConfiguration, taints []
 		},
 	}
 }
+
+func (u Ubuntu) EphemeralBlockDevice() string {
+	return "/dev/sda1"
+}
