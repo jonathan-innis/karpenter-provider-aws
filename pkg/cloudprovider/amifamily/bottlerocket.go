@@ -22,9 +22,7 @@ import (
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
 	"github.com/aws/karpenter-core/pkg/utils/resources"
 
-	"github.com/aws/aws-sdk-go/aws"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 
@@ -62,22 +60,4 @@ func (b Bottlerocket) UserData(kubeletConfig *v1alpha5.KubeletConfiguration, tai
 			CustomUserData:          customUserData,
 		},
 	}
-}
-
-// DefaultBlockDeviceMappings returns the default block device mappings for the AMI Family
-func (b Bottlerocket) DefaultBlockDeviceMappings(q resource.Quantity) []*v1alpha1.BlockDeviceMapping {
-	return []*v1alpha1.BlockDeviceMapping{
-		{
-			DeviceName: aws.String("/dev/xvda"),
-			EBS:        DefaultEBS(resource.MustParse("4Gi")),
-		},
-		{
-			DeviceName: b.EphemeralBlockDevice(),
-			EBS:        DefaultEBS(q),
-		},
-	}
-}
-
-func (b Bottlerocket) EphemeralBlockDevice() *string {
-	return aws.String("/dev/xvdb")
 }

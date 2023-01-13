@@ -229,27 +229,21 @@ func (p *LaunchTemplateProvider) createLaunchTemplate(ctx context.Context, optio
 }
 
 func (p *LaunchTemplateProvider) blockDeviceMappings(blockDeviceMappings []*v1alpha1.BlockDeviceMapping) []*ec2.LaunchTemplateBlockDeviceMappingRequest {
-	if len(blockDeviceMappings) == 0 {
-		// The EC2 API fails with empty slices and expects nil.
-		return nil
-	}
-	blockDeviceMappingsRequest := []*ec2.LaunchTemplateBlockDeviceMappingRequest{}
-	for _, blockDeviceMapping := range blockDeviceMappings {
-		blockDeviceMappingsRequest = append(blockDeviceMappingsRequest, &ec2.LaunchTemplateBlockDeviceMappingRequest{
-			DeviceName: blockDeviceMapping.DeviceName,
+	return lo.Map(blockDeviceMappings, func(m *v1alpha1.BlockDeviceMapping, _ int) *ec2.LaunchTemplateBlockDeviceMappingRequest {
+		return &ec2.LaunchTemplateBlockDeviceMappingRequest{
+			DeviceName: m.DeviceName,
 			Ebs: &ec2.LaunchTemplateEbsBlockDeviceRequest{
-				DeleteOnTermination: blockDeviceMapping.EBS.DeleteOnTermination,
-				Encrypted:           blockDeviceMapping.EBS.Encrypted,
-				VolumeType:          blockDeviceMapping.EBS.VolumeType,
-				Iops:                blockDeviceMapping.EBS.IOPS,
-				Throughput:          blockDeviceMapping.EBS.Throughput,
-				KmsKeyId:            blockDeviceMapping.EBS.KMSKeyID,
-				SnapshotId:          blockDeviceMapping.EBS.SnapshotID,
-				VolumeSize:          p.volumeSize(blockDeviceMapping.EBS.VolumeSize),
+				DeleteOnTermination: m.EBS.DeleteOnTermination,
+				Encrypted:           m.EBS.Encrypted,
+				VolumeType:          m.EBS.VolumeType,
+				Iops:                m.EBS.IOPS,
+				Throughput:          m.EBS.Throughput,
+				KmsKeyId:            m.EBS.KMSKeyID,
+				SnapshotId:          m.EBS.SnapshotID,
+				VolumeSize:          p.volumeSize(m.EBS.VolumeSize),
 			},
-		})
-	}
-	return blockDeviceMappingsRequest
+		}
+	})
 }
 
 // volumeSize returns a GiB scaled value from a resource quantity or nil if the resource quantity passed in is nil

@@ -18,6 +18,8 @@ func NewVolumeProvider(ec2api ec2iface.EC2API) *VolumeProvider {
 	}
 }
 
+// GetEphemeralVolume retrieves the first blockDeviceMapping volume from the instance, which we assume
+// to be the ephemeral volume for the node
 func (p *VolumeProvider) GetEphemeralVolume(instance *ec2.Instance) (*ec2.Volume, error) {
 	var volume *ec2.Volume
 	if len(instance.BlockDeviceMappings) == 0 || instance.BlockDeviceMappings[0].Ebs == nil {
@@ -33,7 +35,7 @@ func (p *VolumeProvider) GetEphemeralVolume(instance *ec2.Instance) (*ec2.Volume
 		if len(out.Volumes) != 1 {
 			return fmt.Errorf("expected a single device volume, got %d", len(out.Volumes))
 		}
-		volume = out.Volumes[0]
+		volume = out.Volumes[0] // First volume in the response
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("retrieving device volume for instance, %w", err)

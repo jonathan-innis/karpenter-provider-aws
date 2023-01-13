@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -55,9 +56,21 @@ type AMIProvider struct {
 	kubernetesInterface    kubernetes.Interface
 }
 
-type AMI struct {
-	AmiID        string
-	CreationDate string
+type Image struct {
+	*ec2.Image
+	Requirements scheduling.Requirements
+}
+
+func NewImage(image *ec2.Image) *Image {
+	return &Image{
+		Image:        image,
+		Requirements: requirementsFromImage(image),
+	}
+}
+
+type MappingData struct {
+	InstanceTypes       []*cloudprovider.InstanceType
+	BlockDeviceMappings []*v1alpha1.BlockDeviceMapping
 }
 
 const (
@@ -96,43 +109,59 @@ func (p *AMIProvider) KubeServerVersion(ctx context.Context) (string, error) {
 
 // Get returns a set of AMIIDs and corresponding instance types. AMI may vary due to architecture, accelerator, etc
 // If AMI overrides are specified in the AWSNodeTemplate, then only those AMIs will be chosen.
-func (p *AMIProvider) Get(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate, instanceTypes []*cloudprovider.InstanceType, amiFamily AMIFamily) (map[string][]*cloudprovider.InstanceType, error) {
+func (p *AMIProvider) Get(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate, instanceTypes []*cloudprovider.InstanceType, amiFamily AMIFamily) (map[string]*MappingData, error) {
 	kubernetesVersion, err := p.KubeServerVersion(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting kubernetes version %w", err)
 	}
-	amiIDs := map[string][]*cloudprovider.InstanceType{}
-	amiRequirements, err := p.getAMIRequirements(ctx, nodeTemplate)
+	amiMapping := map[string]*MappingData{}
+	amis, err := p.getImages(ctx, nodeTemplate)
 	if err != nil {
 		return nil, err
 	}
-	if len(amiRequirements) > 0 {
-		// Iterate through AMIs in order of creation date to use latest AMI
-		amis := sortAMIsByCreationDate(amiRequirements)
+	if len(amis) > 0 {
+		sortAMIsByCreationDate(amis) // Iterate through AMIs in order of creation date to use the latest AMI
 		for _, instanceType := range instanceTypes {
 			for _, ami := range amis {
-				if err := instanceType.Requirements.Compatible(amiRequirements[ami]); err == nil {
-					amiIDs[ami.AmiID] = append(amiIDs[ami.AmiID], instanceType)
+				if err = instanceType.Requirements.Compatible(ami.Requirements); err == nil {
+					// Update AMI mapping with the added instance type
+					if _, ok := amiMapping[aws.StringValue(ami.ImageId)]; ok {
+						amiMapping[aws.StringValue(ami.ImageId)].InstanceTypes = append(amiMapping[aws.StringValue(ami.ImageId)].InstanceTypes, instanceType)
+					} else {
+						amiMapping[aws.StringValue(ami.ImageId)].BlockDeviceMappings = lo.Map(ami.BlockDeviceMappings, func(m *ec2.BlockDeviceMapping, _ int) *v1alpha1.BlockDeviceMapping { return newBlockDeviceMapping(m) })
+					}
 					break
 				}
 			}
 		}
-		if len(amiIDs) == 0 {
-			return nil, fmt.Errorf("no instance types satisfy requirements of amis %v,", lo.Keys(amiRequirements))
+		if len(amiMapping) == 0 {
+			return nil, fmt.Errorf("no instance types satisfy requirements of amis")
 		}
 	} else {
 		for _, instanceType := range instanceTypes {
-			amiID, err := p.getDefaultAMIFromSSM(ctx, amiFamily.SSMAlias(kubernetesVersion, instanceType))
+			amiID, err := p.defaultAMIFromSSM(ctx, amiFamily.SSMAlias(kubernetesVersion, instanceType))
 			if err != nil {
 				return nil, err
 			}
-			amiIDs[amiID] = append(amiIDs[amiID], instanceType)
+			amis, err = p.selectImages(ctx, map[string]string{"aws-ids": amiID})
+			if err != nil {
+				return nil, fmt.Errorf("fetching images, %w", err)
+			}
+			if len(amis) == 0 {
+				return nil, fmt.Errorf("expected one image, got %d", len(amis))
+			}
+			// Update AMI mapping with the added instance type
+			if _, ok := amiMapping[aws.StringValue(amis[0].ImageId)]; ok {
+				amiMapping[aws.StringValue(amis[0].ImageId)].InstanceTypes = append(amiMapping[aws.StringValue(amis[0].ImageId)].InstanceTypes, instanceType)
+			} else {
+				amiMapping[aws.StringValue(amis[0].ImageId)].BlockDeviceMappings = lo.Map(amis[0].BlockDeviceMappings, func(m *ec2.BlockDeviceMapping, _ int) *v1alpha1.BlockDeviceMapping { return newBlockDeviceMapping(m) })
+			}
 		}
 	}
-	return amiIDs, nil
+	return amiMapping, nil
 }
 
-func (p *AMIProvider) getDefaultAMIFromSSM(ctx context.Context, ssmQuery string) (string, error) {
+func (p *AMIProvider) defaultAMIFromSSM(ctx context.Context, ssmQuery string) (string, error) {
 	if id, ok := p.ssmCache.Get(ssmQuery); ok {
 		return id.(string), nil
 	}
@@ -148,29 +177,27 @@ func (p *AMIProvider) getDefaultAMIFromSSM(ctx context.Context, ssmQuery string)
 	return ami, nil
 }
 
-func (p *AMIProvider) getAMIRequirements(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate) (map[AMI]scheduling.Requirements, error) {
+func (p *AMIProvider) getImages(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate) ([]*Image, error) {
 	if len(nodeTemplate.Spec.AMISelector) == 0 {
-		return map[AMI]scheduling.Requirements{}, nil
+		return nil, nil
 	}
-	return p.selectAMIs(ctx, nodeTemplate.Spec.AMISelector)
+	return p.selectImages(ctx, nodeTemplate.Spec.AMISelector)
 }
 
-func (p *AMIProvider) selectAMIs(ctx context.Context, amiSelector map[string]string) (map[AMI]scheduling.Requirements, error) {
-	ec2AMIs, err := p.fetchAMIsFromEC2(ctx, amiSelector)
+func (p *AMIProvider) selectImages(ctx context.Context, amiSelector map[string]string) ([]*Image, error) {
+	ec2AMIs, err := p.fetchImagesFromEC2(ctx, amiSelector)
 	if err != nil {
 		return nil, err
 	}
 	if len(ec2AMIs) == 0 {
 		return nil, fmt.Errorf("no amis exist given constraints")
 	}
-	var amiIDs = map[AMI]scheduling.Requirements{}
-	for _, ec2AMI := range ec2AMIs {
-		amiIDs[AMI{*ec2AMI.ImageId, *ec2AMI.CreationDate}] = p.getRequirementsFromImage(ec2AMI)
-	}
-	return amiIDs, nil
+	return lo.Map(ec2AMIs, func(i *ec2.Image, _ int) *Image {
+		return NewImage(i)
+	}), nil
 }
 
-func (p *AMIProvider) fetchAMIsFromEC2(ctx context.Context, amiSelector map[string]string) ([]*ec2.Image, error) {
+func (p *AMIProvider) fetchImagesFromEC2(ctx context.Context, amiSelector map[string]string) ([]*ec2.Image, error) {
 	filters := getFilters(amiSelector)
 	hash, err := hashstructure.Hash(filters, hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
 	if err != nil {
@@ -194,7 +221,7 @@ func (p *AMIProvider) fetchAMIsFromEC2(ctx context.Context, amiSelector map[stri
 }
 
 func getFilters(amiSelector map[string]string) []*ec2.Filter {
-	filters := []*ec2.Filter{}
+	var filters []*ec2.Filter
 	for key, value := range amiSelector {
 		if key == "aws-ids" {
 			filterValues := functional.SplitCommaSeparatedString(value)
@@ -212,18 +239,15 @@ func getFilters(amiSelector map[string]string) []*ec2.Filter {
 	return filters
 }
 
-func sortAMIsByCreationDate(amiRequirements map[AMI]scheduling.Requirements) []AMI {
-	amis := lo.Keys(amiRequirements)
-
+func sortAMIsByCreationDate(amis []*Image) {
 	sort.Slice(amis, func(i, j int) bool {
-		itime, _ := time.Parse(time.RFC3339, amis[i].CreationDate)
-		jtime, _ := time.Parse(time.RFC3339, amis[j].CreationDate)
+		itime, _ := time.Parse(time.RFC3339, aws.StringValue(amis[i].CreationDate))
+		jtime, _ := time.Parse(time.RFC3339, aws.StringValue(amis[j].CreationDate))
 		return itime.Unix() >= jtime.Unix()
 	})
-	return amis
 }
 
-func (p *AMIProvider) getRequirementsFromImage(ec2Image *ec2.Image) scheduling.Requirements {
+func requirementsFromImage(ec2Image *ec2.Image) scheduling.Requirements {
 	requirements := scheduling.NewRequirements()
 	for _, tag := range ec2Image.Tags {
 		if v1alpha5.WellKnownLabels.Has(*tag.Key) {
@@ -237,4 +261,23 @@ func (p *AMIProvider) getRequirementsFromImage(ec2Image *ec2.Image) scheduling.R
 	}
 	requirements.Add(scheduling.NewRequirement(v1.LabelArchStable, v1.NodeSelectorOpIn, architecture))
 	return requirements
+}
+
+func newBlockDeviceMapping(in *ec2.BlockDeviceMapping) *v1alpha1.BlockDeviceMapping {
+	ret := &v1alpha1.BlockDeviceMapping{
+		DeviceName: in.DeviceName,
+	}
+	if in.Ebs != nil {
+		ret.EBS = &v1alpha1.BlockDevice{
+			DeleteOnTermination: in.Ebs.DeleteOnTermination,
+			Encrypted:           in.Ebs.Encrypted,
+			IOPS:                in.Ebs.Iops,
+			KMSKeyID:            in.Ebs.KmsKeyId,
+			SnapshotID:          in.Ebs.SnapshotId,
+			Throughput:          in.Ebs.Throughput,
+			VolumeSize:          lo.ToPtr(resource.MustParse(fmt.Sprintf("%dGi", in.Ebs.VolumeSize))),
+			VolumeType:          in.Ebs.VolumeType,
+		}
+	}
+	return ret
 }

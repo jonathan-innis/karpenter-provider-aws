@@ -35,14 +35,6 @@ import (
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
 )
 
-func DefaultEBS(quantity resource.Quantity) *v1alpha1.BlockDevice {
-	return &v1alpha1.BlockDevice{
-		Encrypted:  aws.Bool(true),
-		VolumeType: aws.String(ec2.VolumeTypeGp3),
-		VolumeSize: lo.ToPtr(quantity),
-	}
-}
-
 // Resolver is able to fill-in dynamic launch template parameters
 type Resolver struct {
 	amiProvider *AMIProvider
@@ -97,9 +89,7 @@ func NewLaunchTemplate(options *Options, amiFamily AMIFamily, kubelet *v1alpha5.
 type AMIFamily interface {
 	SSMAlias(version string, instanceType *cloudprovider.InstanceType) string
 	UserData(kubeletConfig *v1alpha5.KubeletConfiguration, taints []core.Taint, labels map[string]string, caBundle *string, instanceTypes []*cloudprovider.InstanceType, customUserData *string) bootstrap.Bootstrapper
-	DefaultBlockDeviceMappings(resource.Quantity) []*v1alpha1.BlockDeviceMapping
 	DefaultMetadataOptions() *v1alpha1.MetadataOptions
-	EphemeralBlockDevice() *string
 }
 
 // New constructs a new launch template Resolver
@@ -109,29 +99,33 @@ func New(amiProvider *AMIProvider) *Resolver {
 	}
 }
 
+func (r Resolver) DiscoverBlockDeviceMappings(id string) {
+
+}
+
 // Resolve generates launch templates using the static options and dynamically generates launch template parameters.
 // Multiple ResolvedTemplates are returned based on the instanceTypes passed in to support special AMIs for certain instance types like GPUs.
 func (r Resolver) Resolve(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate, machine *v1alpha5.Machine, instanceTypes []*cloudprovider.InstanceType, options *Options) ([]*LaunchTemplate, error) {
 	amiFamily := GetAMIFamily(nodeTemplate.Spec.AMIFamily, options)
-	amiIDs, err := r.amiProvider.Get(ctx, nodeTemplate, instanceTypes, amiFamily)
+	amiMapping, err := r.amiProvider.Get(ctx, nodeTemplate, instanceTypes, amiFamily)
 	if err != nil {
 		return nil, err
 	}
 	var templates []*LaunchTemplate
-	for amiID, its := range amiIDs {
+	for id, mappingData := range amiMapping {
 		metadataOptions := lo.Ternary(nodeTemplate.Spec.MetadataOptions != nil, nodeTemplate.Spec.MetadataOptions, amiFamily.DefaultMetadataOptions())
 		taints := append(machine.Spec.Taints, machine.Spec.StartupTaints...)
 
 		var blockDeviceMappings []*v1alpha1.BlockDeviceMapping
-		minEphemeralStorage := resource.MustParse("10Gi") // We need at least this much storage to be able to store the image/snapshot
+		minEphemeralStorage := resource.MustParse("20Gi") // We need at least this much storage to be able to store the image/snapshot
 		if len(nodeTemplate.Spec.BlockDeviceMappings) == 0 {
-			blockDeviceMappings = amiFamily.DefaultBlockDeviceMappings(resources.Max(minEphemeralStorage, neededEphemeralStorage(machine.Spec.Resources.Requests[core.ResourceEphemeralStorage], machine.Spec.Kubelet)))
-		} else {
-			// Either provision the volume size to be what was requested or have it be what is needed to run all the resource requests
-			blockDeviceMappings[0].EBS.VolumeSize = lo.ToPtr(resources.Max(minEphemeralStorage, *blockDeviceMappings[0].EBS.VolumeSize, neededEphemeralStorage(machine.Spec.Resources.Requests[core.ResourceEphemeralStorage], machine.Spec.Kubelet)))
+			blockDeviceMappings = mappingData.BlockDeviceMappings
 		}
+		// Either provision the volume size to be what was requested or have it be what is needed to run all the resource requests
+		blockDeviceMappings[0].EBS.VolumeSize = lo.ToPtr(resources.Max(minEphemeralStorage, *blockDeviceMappings[0].EBS.VolumeSize, neededEphemeralStorage(machine.Spec.Resources.Requests[core.ResourceEphemeralStorage], machine.Spec.Kubelet)))
+
 		templates = append(templates, NewLaunchTemplate(options, amiFamily, machine.Spec.Kubelet, lo.FromPtr(nodeTemplate.Spec.UserData),
-			blockDeviceMappings, metadataOptions, amiID, taints, its))
+			blockDeviceMappings, metadataOptions, id, taints, mappingData.InstanceTypes))
 	}
 	return templates, nil
 }

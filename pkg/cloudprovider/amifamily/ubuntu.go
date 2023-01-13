@@ -17,11 +17,8 @@ package amifamily
 import (
 	"fmt"
 
-	"github.com/aws/aws-sdk-go/aws"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 
-	"github.com/aws/karpenter/pkg/apis/v1alpha1"
 	"github.com/aws/karpenter/pkg/cloudprovider/amifamily/bootstrap"
 
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
@@ -51,16 +48,4 @@ func (u Ubuntu) UserData(kubeletConfig *v1alpha5.KubeletConfiguration, taints []
 			CustomUserData:          customUserData,
 		},
 	}
-}
-
-// DefaultBlockDeviceMappings returns the default block device mappings for the AMI Family
-func (u Ubuntu) DefaultBlockDeviceMappings(q resource.Quantity) []*v1alpha1.BlockDeviceMapping {
-	return []*v1alpha1.BlockDeviceMapping{{
-		DeviceName: u.EphemeralBlockDevice(),
-		EBS:        DefaultEBS(q),
-	}}
-}
-
-func (u Ubuntu) EphemeralBlockDevice() *string {
-	return aws.String("/dev/sda1")
 }

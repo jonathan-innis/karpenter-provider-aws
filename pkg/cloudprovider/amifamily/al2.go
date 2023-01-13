@@ -19,7 +19,6 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 
@@ -83,16 +82,4 @@ func (a AL2) defaultIPv6DNS(kubeletConfig *v1alpha5.KubeletConfiguration) *v1alp
 	newKubeletConfig := kubeletConfig.DeepCopy()
 	newKubeletConfig.ClusterDNS = []string{a.KubeDNSIP.String()}
 	return newKubeletConfig
-}
-
-// DefaultBlockDeviceMappings returns the default block device mappings for the AMI Family
-func (a AL2) DefaultBlockDeviceMappings(q resource.Quantity) []*v1alpha1.BlockDeviceMapping {
-	return []*v1alpha1.BlockDeviceMapping{{
-		DeviceName: a.EphemeralBlockDevice(),
-		EBS:        DefaultEBS(q),
-	}}
-}
-
-func (a AL2) EphemeralBlockDevice() *string {
-	return aws.String("/dev/xvda")
 }
