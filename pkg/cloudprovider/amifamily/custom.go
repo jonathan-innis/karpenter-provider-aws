@@ -26,7 +26,6 @@ import (
 )
 
 type Custom struct {
-	DefaultFamily
 	*Options
 }
 

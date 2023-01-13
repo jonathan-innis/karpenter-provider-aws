@@ -32,7 +32,6 @@ import (
 )
 
 type Bottlerocket struct {
-	DefaultFamily
 	*Options
 }
 

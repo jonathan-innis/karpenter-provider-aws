@@ -30,7 +30,6 @@ import (
 )
 
 type AL2 struct {
-	DefaultFamily
 	*Options
 }
 

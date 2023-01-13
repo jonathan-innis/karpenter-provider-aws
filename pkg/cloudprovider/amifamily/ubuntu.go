@@ -29,7 +29,6 @@ import (
 )
 
 type Ubuntu struct {
-	DefaultFamily
 	*Options
 }
 

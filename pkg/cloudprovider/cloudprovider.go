@@ -71,6 +71,7 @@ var _ cloudprovider.CloudProvider = (*CloudProvider)(nil)
 type CloudProvider struct {
 	instanceTypeProvider *InstanceTypeProvider
 	instanceProvider     *InstanceProvider
+	volumeProvider       *VolumeProvider
 	kubeClient           k8sClient.Client
 	amiProvider          *amifamily.AMIProvider
 }
@@ -112,6 +113,7 @@ func New(ctx awscontext.Context) *CloudProvider {
 				kubeDNSIP,
 			),
 		),
+		volumeProvider: NewVolumeProvider(ec2api),
 	}
 }
 
@@ -145,7 +147,13 @@ func (c *CloudProvider) Create(ctx context.Context, machine *v1alpha5.Machine) (
 	if err != nil {
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}
-	return c.instanceToNode(ctx, instance, instanceTypes), nil
+	volume, err := c.volumeProvider.GetEphemeralVolume(instance)
+	if err != nil {
+		// If we fail to get the volume, rather than failing outright, we fallback to assuming 20Gi for inflight
+		logging.FromContext(ctx).Errorf("retrieving instance volume, falling back to 20Gi volume for inflight, %s", err)
+		volume = &ec2.Volume{Size: aws.Int64(20)}
+	}
+	return c.instanceToNode(ctx, instance, volume, instanceTypes), nil
 }
 
 func (c *CloudProvider) LivenessProbe(req *http.Request) error {
@@ -282,7 +290,7 @@ func (c *CloudProvider) resolveInstanceTypes(ctx context.Context, machine *v1alp
 	}), nil
 }
 
-func (c *CloudProvider) instanceToNode(ctx context.Context, instance *ec2.Instance, instanceTypes []*cloudprovider.InstanceType) *v1.Node {
+func (c *CloudProvider) instanceToNode(ctx context.Context, instance *ec2.Instance, volume *ec2.Volume, instanceTypes []*cloudprovider.InstanceType) *v1.Node {
 	for _, instanceType := range instanceTypes {
 		if instanceType.Name == aws.StringValue(instance.InstanceType) {
 			nodeName := strings.ToLower(aws.StringValue(instance.PrivateDnsName))
@@ -296,6 +304,7 @@ func (c *CloudProvider) instanceToNode(ctx context.Context, instance *ec2.Instan
 				}
 			}
 			labels[v1alpha1.LabelInstanceAMIID] = aws.StringValue(instance.ImageId)
+			labels[v1alpha1.LabelVolumeSize] = fmt.Sprint(aws.Int64Value(volume.Size))
 			labels[v1.LabelTopologyZone] = aws.StringValue(instance.Placement.AvailabilityZone)
 			labels[v1alpha5.LabelCapacityType] = getCapacityType(instance)
 

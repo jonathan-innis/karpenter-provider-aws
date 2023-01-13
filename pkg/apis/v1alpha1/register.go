@@ -73,6 +73,7 @@ var (
 	LabelInstanceGPUCount        = LabelDomain + "/instance-gpu-count"
 	LabelInstanceGPUMemory       = LabelDomain + "/instance-gpu-memory"
 	LabelInstanceAMIID           = LabelDomain + "/instance-ami-id"
+	LabelVolumeSize              = LabelDomain + "/instance-volume-size"
 
 	InterruptionInfrastructureFinalizer = Group + "/interruption-infrastructure"
 )

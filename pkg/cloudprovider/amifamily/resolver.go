@@ -35,10 +35,6 @@ import (
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
 )
 
-const (
-	nodeFSAvailableSignal = "nodefs.available"
-)
-
 func DefaultEBS(quantity resource.Quantity) *v1alpha1.BlockDevice {
 	return &v1alpha1.BlockDevice{
 		Encrypted:  aws.Bool(true),
@@ -104,25 +100,6 @@ type AMIFamily interface {
 	DefaultBlockDeviceMappings(resource.Quantity) []*v1alpha1.BlockDeviceMapping
 	DefaultMetadataOptions() *v1alpha1.MetadataOptions
 	EphemeralBlockDevice() *string
-	FeatureFlags() FeatureFlags
-}
-
-// FeatureFlags describes whether the features below are enabled for a given AMIFamily
-type FeatureFlags struct {
-	UsesENILimitedMemoryOverhead bool
-	PodsPerCoreEnabled           bool
-	EvictionSoftEnabled          bool
-}
-
-// DefaultFamily provides default values for AMIFamilies that compose it
-type DefaultFamily struct{}
-
-func (d DefaultFamily) FeatureFlags() FeatureFlags {
-	return FeatureFlags{
-		UsesENILimitedMemoryOverhead: true,
-		PodsPerCoreEnabled:           true,
-		EvictionSoftEnabled:          true,
-	}
 }
 
 // New constructs a new launch template Resolver
@@ -146,7 +123,7 @@ func (r Resolver) Resolve(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTem
 		taints := append(machine.Spec.Taints, machine.Spec.StartupTaints...)
 
 		var blockDeviceMappings []*v1alpha1.BlockDeviceMapping
-		minEphemeralStorage := resource.MustParse("10Gi")
+		minEphemeralStorage := resource.MustParse("10Gi") // We need at least this much storage to be able to store the image/snapshot
 		if len(nodeTemplate.Spec.BlockDeviceMappings) == 0 {
 			blockDeviceMappings = amiFamily.DefaultBlockDeviceMappings(resources.Max(minEphemeralStorage, neededEphemeralStorage(machine.Spec.Resources.Requests[core.ResourceEphemeralStorage], machine.Spec.Kubelet)))
 		} else {
@@ -162,14 +139,18 @@ func (r Resolver) Resolve(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTem
 // neededEphemeralStorage calculates how much ephemeral storage will be needed by the node given the requested
 // ephemeral storage and the KubeletConfiguration specified by the machine
 func neededEphemeralStorage(quantity resource.Quantity, kc *v1alpha5.KubeletConfiguration) resource.Quantity {
-	systemOverhead := resource.MustParse("2Gi") // TODO @joinnis: Use the kubeletConfiguration as an overlay here
+	systemOverhead := resources.Merge(
+		cloudprovider.SystemReserved(),
+		cloudprovider.KubeReserved(resource.Quantity{}, resource.Quantity{}), // The assumption here is that pods and cpus don't affect ephemeral-storage kubeReserved
+	)[core.ResourceEphemeralStorage]
+
 	var evictionThreshold resource.Quantity
 	if kc == nil || kc.EvictionHard == nil {
 		// If not set, the default EvictionHard value for nodefs.available is 10%
 		evictionThreshold = *resources.Quantity(fmt.Sprint(quantity.AsApproximateFloat64() / 0.9)) // We need to find x in (x * 0.9 = quantity)
 	} else {
 		// If EvictionHard is set, we need to increase our filesystem by the nodefs.available set value
-		if v, ok := kc.EvictionHard[nodeFSAvailableSignal]; ok {
+		if v, ok := kc.EvictionHard[cloudprovider.EvictionSignalNodeFSAvailable]; ok {
 			if strings.HasSuffix(v, "%") {
 				p := lo.Must(functional.ParsePercentage(v))
 				if p == 100 {
@@ -184,7 +165,7 @@ func neededEphemeralStorage(quantity resource.Quantity, kc *v1alpha5.KubeletConf
 	}
 	// We only care about EvictionSoft threshold here if it is greater than the EvictionHard
 	if kc != nil && kc.EvictionSoft != nil {
-		if v, ok := kc.EvictionSoft[nodeFSAvailableSignal]; ok {
+		if v, ok := kc.EvictionSoft[cloudprovider.EvictionSignalNodeFSAvailable]; ok {
 			if strings.HasSuffix(v, "%") {
 				p := lo.Must(functional.ParsePercentage(v))
 				if p == 100 {
