@@ -147,7 +147,7 @@ var _ = BeforeSuite(func() {
 	securityGroupProvider = securitygroup.NewProvider(fakeEC2API)
 	launchTemplateProvider = &LaunchTemplateProvider{
 		ec2api:                fakeEC2API,
-		amiFamily:             amifamily.New(env.Client, amiProvider),
+		amiFamily:             amifamily.New(amiProvider),
 		securityGroupProvider: securityGroupProvider,
 		cache:                 launchTemplateCache,
 		caBundle:              ptr.String("ca-bundle"),

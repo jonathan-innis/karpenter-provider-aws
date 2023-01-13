@@ -17,8 +17,6 @@ package amifamily
 import (
 	"fmt"
 
-	"github.com/samber/lo"
-
 	"github.com/aws/karpenter/pkg/cloudprovider/amifamily/bootstrap"
 
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
@@ -68,41 +66,19 @@ func (b Bottlerocket) UserData(kubeletConfig *v1alpha5.KubeletConfiguration, tai
 }
 
 // DefaultBlockDeviceMappings returns the default block device mappings for the AMI Family
-func (b Bottlerocket) DefaultBlockDeviceMappings() []*v1alpha1.BlockDeviceMapping {
-	xvdaEBS := DefaultEBS
-	xvdaEBS.VolumeSize = lo.ToPtr(resource.MustParse("4Gi"))
+func (b Bottlerocket) DefaultBlockDeviceMappings(q resource.Quantity) []*v1alpha1.BlockDeviceMapping {
 	return []*v1alpha1.BlockDeviceMapping{
 		{
 			DeviceName: aws.String("/dev/xvda"),
-			EBS:        &xvdaEBS,
+			EBS:        DefaultEBS(resource.MustParse("4Gi")),
 		},
 		{
 			DeviceName: b.EphemeralBlockDevice(),
-			EBS:        &DefaultEBS,
+			EBS:        DefaultEBS(q),
 		},
 	}
 }
 
 func (b Bottlerocket) EphemeralBlockDevice() *string {
 	return aws.String("/dev/xvdb")
-}
-
-// PodsPerCoreEnabled is currently disabled for Bottlerocket AMIFamily because it does
-// not currently support the podsPerCore parameter passed through the kubernetes settings TOML userData
-// If a Provisioner sets the podsPerCore value when using the Bottlerocket AMIFamily in the provider,
-// podsPerCore will be ignored
-// https://github.com/bottlerocket-os/bottlerocket/issues/1721
-
-// EvictionSoftEnabled is currently disabled for Bottlerocket AMIFamily because it does
-// not currently support the evictionSoft parameter passed through the kubernetes settings TOML userData
-// If a Provisioner sets the evictionSoft value when using the Bottlerocket AMIFamily in the provider,
-// evictionSoft will be ignored
-// https://github.com/bottlerocket-os/bottlerocket/issues/1445
-
-func (b Bottlerocket) FeatureFlags() FeatureFlags {
-	return FeatureFlags{
-		UsesENILimitedMemoryOverhead: false,
-		PodsPerCoreEnabled:           false,
-		EvictionSoftEnabled:          false,
-	}
 }

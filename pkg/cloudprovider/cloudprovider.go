@@ -90,7 +90,7 @@ func New(ctx awscontext.Context) *CloudProvider {
 	instanceTypeProvider := NewInstanceTypeProvider(ctx, ctx.Session, ec2api, subnetProvider, ctx.UnavailableOfferingsCache, ctx.StartAsync)
 	amiProvider := amifamily.NewAMIProvider(ctx.KubeClient, ctx.KubernetesInterface, ssm.New(ctx.Session), ec2api,
 		cache.New(awscontext.CacheTTL, awscontext.CacheCleanupInterval), cache.New(awscontext.CacheTTL, awscontext.CacheCleanupInterval), cache.New(awscontext.CacheTTL, awscontext.CacheCleanupInterval))
-	amiResolver := amifamily.New(ctx.KubeClient, amiProvider)
+	amiResolver := amifamily.New(amiProvider)
 	return &CloudProvider{
 		kubeClient:           ctx.KubeClient,
 		instanceTypeProvider: instanceTypeProvider,
@@ -272,7 +272,7 @@ func (c *CloudProvider) resolveNodeTemplate(ctx context.Context, raw []byte, obj
 }
 
 func (c *CloudProvider) resolveInstanceTypes(ctx context.Context, machine *v1alpha5.Machine) ([]*cloudprovider.InstanceType, error) {
-	instanceTypes, err := c.GetInstanceTypes(ctx)
+	instanceTypes, err := cloudprovider.NewHelper(c).GetInstanceTypesWithKubelet(ctx, machine.Spec.Kubelet)
 	if err != nil {
 		return nil, fmt.Errorf("getting instance types, %w", err)
 	}

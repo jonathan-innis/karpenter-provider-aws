@@ -126,7 +126,7 @@ func (p *LaunchTemplateProvider) Invalidate(ctx context.Context, ltName string, 
 }
 
 func launchTemplateName(options *amifamily.LaunchTemplate) string {
-	hash, err := hashstructure.Hash(options, hashstructure.FormatV2, nil)
+	hash, err := hashstructure.Hash(options, hashstructure.FormatV2, &hashstructure.HashOptions{UseStringer: true})
 	if err != nil {
 		panic(fmt.Sprintf("hashing launch template, %s", err))
 	}
