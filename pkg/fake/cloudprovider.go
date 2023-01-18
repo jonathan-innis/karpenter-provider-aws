@@ -20,8 +20,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "k8s.io/api/core/v1"
-
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 	corecloudprovider "github.com/aws/karpenter-core/pkg/cloudprovider"
 	"github.com/aws/karpenter-core/pkg/test"
@@ -45,17 +43,20 @@ func NewCloudProvider(validAMIs ...string) *CloudProvider {
 	}
 }
 
-func (c *CloudProvider) Create(_ context.Context, _ *v1alpha5.Machine) (*v1.Node, error) {
+func (c *CloudProvider) Create(_ context.Context, _ *v1alpha5.Machine) (*v1alpha5.Machine, error) {
 	name := test.RandomName()
-	n := &v1.Node{
+	return &v1alpha5.Machine{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
-		Spec: v1.NodeSpec{
+		Status: v1alpha5.MachineStatus{
 			ProviderID: makeProviderID(test.RandomName()),
 		},
-	}
-	return n, nil
+	}, nil
+}
+
+func (c *CloudProvider) Get(context.Context, string, string) (*v1alpha5.Machine, error) {
+	return nil, nil
 }
 
 func (c *CloudProvider) GetInstanceTypes(_ context.Context, _ *v1alpha5.Provisioner) ([]*corecloudprovider.InstanceType, error) {
