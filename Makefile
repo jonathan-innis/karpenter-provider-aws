@@ -48,6 +48,7 @@ run: ## Run Karpenter controller binary against your local cluster
 		--from-literal=aws.clusterEndpoint=${CLUSTER_ENDPOINT} \
 		--from-literal=aws.defaultInstanceProfile=KarpenterNodeInstanceProfile-${CLUSTER_NAME} \
 		--from-literal=aws.interruptionQueueName=${CLUSTER_NAME} \
+		--from-literal=featureGates.driftEnabled=true \
 		--dry-run=client -o yaml | kubectl apply -f -
 
 

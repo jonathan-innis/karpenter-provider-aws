@@ -25,8 +25,6 @@ import (
 	"go.uber.org/multierr"
 	v1 "k8s.io/api/core/v1"
 	"knative.dev/pkg/configmap"
-
-	"github.com/aws/karpenter-core/pkg/apis/config"
 )
 
 type NodeNameConvention string
@@ -36,14 +34,11 @@ const (
 	ResourceName NodeNameConvention = "resource-name"
 )
 
-var ContextKey = Registration
+type settingsKeyType struct{}
 
-var Registration = &config.Registration{
-	ConfigMapName: "karpenter-global-settings",
-	Constructor:   NewSettingsFromConfigMap,
-}
+var ContextKey = settingsKeyType{}
 
-var defaultSettings = Settings{
+var defaultSettings = &Settings{
 	ClusterName:                "",
 	ClusterEndpoint:            "",
 	DefaultInstanceProfile:     "",
@@ -69,8 +64,12 @@ type Settings struct {
 	Tags                       map[string]string  `json:"aws.tags,omitempty"`
 }
 
-// NewSettingsFromConfigMap creates a Settings from the supplied ConfigMap
-func NewSettingsFromConfigMap(cm *v1.ConfigMap) (Settings, error) {
+func (*Settings) ConfigMap() string {
+	return "karpenter-global-settings"
+}
+
+// Inject creates a Settings from the supplied ConfigMap
+func (*Settings) Inject(ctx context.Context, cm *v1.ConfigMap) (context.Context, error) {
 	s := defaultSettings
 
 	if err := configmap.Parse(cm.Data,
@@ -85,14 +84,12 @@ func NewSettingsFromConfigMap(cm *v1.ConfigMap) (Settings, error) {
 		configmap.AsString("aws.interruptionQueueName", &s.InterruptionQueueName),
 		AsMap("aws.tags", &s.Tags),
 	); err != nil {
-		// Failing to parse means that there is some error in the Settings, so we should crash
-		panic(fmt.Sprintf("parsing settings, %v", err))
+		return ctx, fmt.Errorf("parsing settings, %w", err)
 	}
 	if err := s.Validate(); err != nil {
-		// Failing to validate means that there is some error in the Settings, so we should crash
-		panic(fmt.Sprintf("validating settings, %v", err))
+		return ctx, fmt.Errorf("validating settings, %w", err)
 	}
-	return s, nil
+	return ToContext(ctx, s), nil
 }
 
 func (s Settings) Data() (map[string]string, error) {
@@ -132,17 +129,17 @@ func (s Settings) validateEndpoint() error {
 	return nil
 }
 
-func ToContext(ctx context.Context, s Settings) context.Context {
+func ToContext(ctx context.Context, s *Settings) context.Context {
 	return context.WithValue(ctx, ContextKey, s)
 }
 
-func FromContext(ctx context.Context) Settings {
+func FromContext(ctx context.Context) *Settings {
 	data := ctx.Value(ContextKey)
 	if data == nil {
 		// This is developer error if this happens, so we should panic
 		panic("settings doesn't exist in context")
 	}
-	return data.(Settings)
+	return data.(*Settings)
 }
 
 // AsTypedString passes the value at key through into the target, if it exists.
