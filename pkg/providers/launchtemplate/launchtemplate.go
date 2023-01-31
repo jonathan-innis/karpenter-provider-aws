@@ -88,7 +88,7 @@ func NewProvider(ctx context.Context, cache *cache.Cache, ec2api ec2iface.EC2API
 }
 
 func (p *Provider) EnsureAll(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate, machine *v1alpha5.Machine,
-	instanceTypes []*cloudprovider.InstanceType, additionalLabels map[string]string) (map[string][]*cloudprovider.InstanceType, error) {
+	instanceTypes []*cloudprovider.InstanceType, capacityType string) (map[string][]*cloudprovider.InstanceType, error) {
 
 	p.Lock()
 	defer p.Unlock()
@@ -96,7 +96,7 @@ func (p *Provider) EnsureAll(ctx context.Context, nodeTemplate *v1alpha1.AWSNode
 	if nodeTemplate.Spec.LaunchTemplateName != nil {
 		return map[string][]*cloudprovider.InstanceType{ptr.StringValue(nodeTemplate.Spec.LaunchTemplateName): instanceTypes}, nil
 	}
-	options, err := p.createAMIOptions(ctx, machine, nodeTemplate, lo.Assign(machine.Labels, additionalLabels))
+	options, err := p.createAMIOptions(ctx, nodeTemplate, machine, capacityType)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func launchTemplateName(options *amifamily.LaunchTemplate) string {
 	return fmt.Sprintf(launchTemplateNameFormat, fmt.Sprint(hash))
 }
 
-func (p *Provider) createAMIOptions(ctx context.Context, machine *v1alpha5.Machine, nodeTemplate *v1alpha1.AWSNodeTemplate, labels map[string]string) (*amifamily.Options, error) {
+func (p *Provider) createAMIOptions(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate, machine *v1alpha5.Machine, capacityType string) (*amifamily.Options, error) {
 	instanceProfile, err := p.getInstanceProfile(ctx, nodeTemplate)
 	if err != nil {
 		return nil, err
@@ -159,7 +159,7 @@ func (p *Provider) createAMIOptions(ctx context.Context, machine *v1alpha5.Machi
 			fmt.Sprintf("kubernetes.io/cluster/%s", settings.FromContext(ctx).ClusterName): "owned",
 			v1alpha5.ProvisionerNameLabelKey:                                               machine.Labels[v1alpha5.ProvisionerNameLabelKey],
 		}),
-		Labels:    labels,
+		Labels:    lo.Assign(machine.Labels, map[string]string{v1alpha5.LabelCapacityType: capacityType}),
 		CABundle:  p.caBundle,
 		KubeDNSIP: p.KubeDNSIP,
 	}, nil
