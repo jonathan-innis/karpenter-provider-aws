@@ -22,7 +22,6 @@ import (
 	"github.com/aws/karpenter/pkg/cloudprovider"
 	awscontext "github.com/aws/karpenter/pkg/context"
 	"github.com/aws/karpenter/pkg/controllers/interruption"
-	"github.com/aws/karpenter/pkg/controllers/machinehydration"
 	"github.com/aws/karpenter/pkg/controllers/nodetemplate"
 	"github.com/aws/karpenter/pkg/providers/pricing"
 	"github.com/aws/karpenter/pkg/utils/project"
