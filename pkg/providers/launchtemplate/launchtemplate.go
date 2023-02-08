@@ -154,11 +154,12 @@ func (p *Provider) createAMIOptions(ctx context.Context, nodeTemplate *v1alpha1.
 		AWSENILimitedPodDensity: settings.FromContext(ctx).EnableENILimitedPodDensity,
 		InstanceProfile:         instanceProfile,
 		SecurityGroupsIDs:       securityGroupsIDs,
-		Tags: lo.Assign(settings.FromContext(ctx).Tags, nodeTemplate.Spec.Tags, map[string]string{
+		Tags: lo.Assign(map[string]string{
 			"Name": fmt.Sprintf("%s/%s", v1alpha5.ProvisionerNameLabelKey, machine.Labels[v1alpha5.ProvisionerNameLabelKey]),
 			fmt.Sprintf("kubernetes.io/cluster/%s", settings.FromContext(ctx).ClusterName): "owned",
 			v1alpha5.ProvisionerNameLabelKey:                                               machine.Labels[v1alpha5.ProvisionerNameLabelKey],
-		}),
+			v1alpha5.ManagedByLabelKey:                                                     settings.FromContext(ctx).ClusterName,
+		}, settings.FromContext(ctx).Tags, nodeTemplate.Spec.Tags),
 		Labels:    lo.Assign(machine.Labels, map[string]string{v1alpha5.LabelCapacityType: capacityType}),
 		CABundle:  p.caBundle,
 		KubeDNSIP: p.KubeDNSIP,
