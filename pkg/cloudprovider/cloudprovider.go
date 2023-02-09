@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 
+	"k8s.io/apimachinery/pkg/api/resource"
+
+	"github.com/aws/karpenter-core/pkg/utils/functional"
 	"github.com/aws/karpenter/pkg/apis"
 	"github.com/aws/karpenter/pkg/apis/settings"
 	"github.com/aws/karpenter/pkg/apis/v1alpha1"
@@ -128,36 +130,23 @@ func (c *CloudProvider) Create(ctx context.Context, machine *v1alpha5.Machine) (
 		return nil, fmt.Errorf("creating instance, %w", err)
 	}
 	// Resolves instance details into a machine
-	created, err := c.instanceToMachine(ctx, instance, instanceTypes)
+	created, err := c.instanceToMachine(instance, instanceTypes)
 	if err != nil {
 		return nil, fmt.Errorf("resolving instance details into machine, %w", err)
 	}
 	return created, nil
 }
 
-// TODO @joinnis: Remove provisionerName from this call signature once we decouple provisioner from GetInstanceTypes
-func (c *CloudProvider) Get(ctx context.Context, machineName, provisionerName string) (*v1alpha5.Machine, error) {
-	provisioner := &v1alpha5.Provisioner{}
-	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: provisionerName}, provisioner); err != nil {
-		return nil, fmt.Errorf("getting machine provisioner, %w", err)
-	}
-	instanceTypes, err := c.GetInstanceTypes(ctx, provisioner)
+func (c *CloudProvider) List(ctx context.Context) ([]*v1alpha5.Machine, error) {
+	instances, err := c.instanceProvider.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("resolving instance types, %w", err)
+		return nil, fmt.Errorf("listing instances, %w", err)
 	}
-	if len(instanceTypes) == 0 {
-		return nil, fmt.Errorf("all requested instance types were unavailable during launch")
+	var machines []*v1alpha5.Machine
+	for _, instance := range instances {
+		machines = append(machines, lo.Must(c.instanceToMachine(instance, nil)))
 	}
-	instance, err := c.instanceProvider.Get(ctx, machineName)
-	if err != nil {
-		return nil, fmt.Errorf("getting instance, %w", err)
-	}
-	// Resolves instance details into a machine
-	machine, err := c.instanceToMachine(ctx, instance, instanceTypes)
-	if err != nil {
-		return nil, fmt.Errorf("resolving instance details into machine, %w", err)
-	}
-	return machine, nil
+	return machines, nil
 }
 
 func (c *CloudProvider) LivenessProbe(req *http.Request) error {
@@ -169,6 +158,9 @@ func (c *CloudProvider) LivenessProbe(req *http.Request) error {
 
 // GetInstanceTypes returns all available InstanceTypes
 func (c *CloudProvider) GetInstanceTypes(ctx context.Context, provisioner *v1alpha5.Provisioner) ([]*cloudprovider.InstanceType, error) {
+	if provisioner == nil {
+		return c.instanceTypeProvider.List(ctx, &v1alpha5.KubeletConfiguration{}, &v1alpha1.AWSNodeTemplate{})
+	}
 	var rawProvider []byte
 	if provisioner.Spec.Provider != nil {
 		rawProvider = provisioner.Spec.Provider.Raw
@@ -178,14 +170,9 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, provisioner *v1alp
 		return nil, err
 	}
 	// TODO, break this coupling
-	instanceTypes, err := c.instanceTypeProvider.List(ctx, provisioner.Spec.KubeletConfiguration, nodeTemplate)
-	if err != nil {
-		return nil, err
-	}
-	return instanceTypes, nil
+	return c.instanceTypeProvider.List(ctx, provisioner.Spec.KubeletConfiguration, nodeTemplate)
 }
 
-// TODO @joinnis: Migrate this delete call to use tag-based deleting when machine migration is done
 func (c *CloudProvider) Delete(ctx context.Context, machine *v1alpha5.Machine) error {
 	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).With("machine", machine.Name))
 	id, err := utils.ParseInstanceID(machine.Status.ProviderID)
@@ -193,7 +180,7 @@ func (c *CloudProvider) Delete(ctx context.Context, machine *v1alpha5.Machine) e
 		return fmt.Errorf("getting instance ID, %w", err)
 	}
 	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).With("id", id))
-	return c.instanceProvider.DeleteByID(ctx, id)
+	return c.instanceProvider.Delete(ctx, id)
 }
 
 func (c *CloudProvider) IsMachineDrifted(ctx context.Context, machine *v1alpha5.Machine) (bool, error) {
@@ -223,7 +210,7 @@ func (c *CloudProvider) Hydrate(ctx context.Context, machine *v1alpha5.Machine) 
 	if err != nil {
 		return fmt.Errorf("parsing instance id, %w", err)
 	}
-	instance, err := c.instanceProvider.GetByID(ctx, instanceID)
+	instance, err := c.instanceProvider.Get(ctx, instanceID)
 	if err != nil {
 		return fmt.Errorf("getting instance for instanceID '%s', %w", instanceID, err)
 	}
@@ -276,7 +263,7 @@ func (c *CloudProvider) isAMIDrifted(ctx context.Context, machine *v1alpha5.Mach
 	if err != nil {
 		return false, err
 	}
-	instance, err := c.instanceProvider.GetByID(ctx, instanceID)
+	instance, err := c.instanceProvider.Get(ctx, instanceID)
 	if err != nil {
 		return false, fmt.Errorf("getting instance, %w", err)
 	}
@@ -320,15 +307,24 @@ func (c *CloudProvider) resolveInstanceTypes(ctx context.Context, machine *v1alp
 	}), nil
 }
 
-// TODO @joinnis: Remove name resolution when Machine migration is completed
-func (c *CloudProvider) instanceToMachine(ctx context.Context, instance *ec2.Instance, instanceTypes []*cloudprovider.InstanceType) (*v1alpha5.Machine, error) {
+func (c *CloudProvider) instanceToMachine(instance *ec2.Instance, instanceTypes []*cloudprovider.InstanceType) (*v1alpha5.Machine, error) {
 	machine := &v1alpha5.Machine{}
-	instanceType, found := lo.Find(instanceTypes, func(i *cloudprovider.InstanceType) bool {
-		return aws.StringValue(instance.InstanceType) == i.Name
-	})
-	if !found {
-		// This should never happen since the launched instance should always come from supported instance types
-		return nil, fmt.Errorf("launched instance type not included in instance types set")
+
+	var instanceType *cloudprovider.InstanceType
+	if instanceTypes == nil {
+		instanceType = &cloudprovider.InstanceType{
+			Capacity: v1.ResourceList{},
+			Overhead: &cloudprovider.InstanceTypeOverhead{},
+		}
+	} else {
+		var found bool
+		instanceType, found = lo.Find(instanceTypes, func(i *cloudprovider.InstanceType) bool {
+			return aws.StringValue(instance.InstanceType) == i.Name
+		})
+		if !found {
+			// This should never happen since the launched instance should always come from supported instance types
+			return nil, fmt.Errorf("launched instance type not included in instance types set")
+		}
 	}
 	labels := map[string]string{}
 	for key, req := range instanceType.Requirements {
@@ -336,31 +332,18 @@ func (c *CloudProvider) instanceToMachine(ctx context.Context, instance *ec2.Ins
 			labels[key] = req.Values()[0]
 		}
 	}
-	labels[v1alpha1.LabelInstanceAMIID] = aws.StringValue(instance.ImageId)
+	if tag, ok := lo.Find(instance.Tags, func(t *ec2.Tag) bool { return aws.StringValue(t.Key) == v1alpha5.ProvisionerNameLabelKey }); ok {
+		labels[v1alpha5.ProvisionerNameLabelKey] = aws.StringValue(tag.Value)
+	}
 	labels[v1.LabelTopologyZone] = aws.StringValue(instance.Placement.AvailabilityZone)
 	labels[v1alpha5.LabelCapacityType] = getCapacityType(instance)
 	labels[v1alpha5.MachineNameLabelKey] = machine.Name
 
-	machine.Name = lo.Ternary(
-		settings.FromContext(ctx).NodeNameConvention == settings.ResourceName,
-		aws.StringValue(instance.InstanceId),
-		strings.ToLower(aws.StringValue(instance.PrivateDnsName)),
-	)
+	machine.CreationTimestamp = metav1.Time{Time: aws.TimeValue(instance.LaunchTime)}
 	machine.Labels = labels
 	machine.Status.ProviderID = fmt.Sprintf("aws:///%s/%s", aws.StringValue(instance.Placement.AvailabilityZone), aws.StringValue(instance.InstanceId))
-
-	machine.Status.Capacity = v1.ResourceList{}
-	for k, v := range instanceType.Capacity {
-		if !resources.IsZero(v) {
-			machine.Status.Capacity[k] = v
-		}
-	}
-	machine.Status.Allocatable = v1.ResourceList{}
-	for k, v := range instanceType.Allocatable() {
-		if !resources.IsZero(v) {
-			machine.Status.Allocatable[k] = v
-		}
-	}
+	machine.Status.Capacity = functional.FilterMap(instanceType.Capacity, func(_ v1.ResourceName, v resource.Quantity) bool { return !resources.IsZero(v) })
+	machine.Status.Allocatable = functional.FilterMap(instanceType.Allocatable(), func(_ v1.ResourceName, v resource.Quantity) bool { return !resources.IsZero(v) })
 	return machine, nil
 }
 
