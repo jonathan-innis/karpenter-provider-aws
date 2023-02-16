@@ -1,6 +1,6 @@
 module github.com/aws/karpenter/test
 
-go 1.19
+go 1.20
 
 require (
 	github.com/aws/amazon-ec2-spot-interrupter v0.0.9
