@@ -33,6 +33,8 @@ import (
 	"github.com/aws/karpenter/pkg/apis/v1alpha1"
 	"github.com/aws/karpenter/pkg/cloudprovider/amifamily"
 
+	"github.com/aws/karpenter-core/pkg/apis/settings"
+
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 	"github.com/aws/karpenter-core/pkg/cloudprovider"
 	"github.com/aws/karpenter-core/pkg/scheduling"
@@ -51,7 +53,7 @@ func NewInstanceType(ctx context.Context, info *ec2.InstanceTypeInfo, kc *v1alph
 	region string, nodeTemplate *v1alpha1.AWSNodeTemplate, offerings cloudprovider.Offerings) *cloudprovider.InstanceType {
 
 	amiFamily := amifamily.GetAMIFamily(nodeTemplate.Spec.AMIFamily, &amifamily.Options{})
-	return &cloudprovider.InstanceType{
+	i := &cloudprovider.InstanceType{
 		Name:         aws.StringValue(info.InstanceType),
 		Requirements: computeRequirements(ctx, info, offerings, region, amiFamily, kc),
 		Offerings:    offerings,
@@ -62,6 +64,13 @@ func NewInstanceType(ctx context.Context, info *ec2.InstanceTypeInfo, kc *v1alph
 			EvictionThreshold: evictionThreshold(memory(ctx, info), amiFamily, kc),
 		},
 	}
+	// Override any user-defined extended resources through the settings
+	for _, override := range settings.FromContext(ctx).InstanceTypeOverrides {
+		if scheduling.NewNodeSelectorRequirements(override.Requirements...).Compatible(i.Requirements) == nil {
+			i.Capacity = lo.Assign(i.Capacity, override.Capacity)
+		}
+	}
+	return i
 }
 
 func computeRequirements(ctx context.Context, info *ec2.InstanceTypeInfo, offerings cloudprovider.Offerings, region string,
