@@ -21,7 +21,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/patrickmn/go-cache"
 	"github.com/samber/lo"
 	. "knative.dev/pkg/logging/testing"
 	_ "knative.dev/pkg/system/testing"
@@ -29,9 +28,10 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/ec2"
 
-	"github.com/aws/karpenter-core/pkg/operator/injection"
-	"github.com/aws/karpenter-core/pkg/operator/options"
+	coresettings "github.com/aws/karpenter-core/pkg/apis/settings"
 	"github.com/aws/karpenter-core/pkg/operator/scheme"
+	"github.com/aws/karpenter/pkg/apis/settings"
+	"github.com/aws/karpenter/pkg/test"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -40,23 +40,14 @@ import (
 	. "github.com/aws/karpenter-core/pkg/test/expectations"
 	"github.com/aws/karpenter/pkg/apis"
 	"github.com/aws/karpenter/pkg/apis/v1alpha1"
-	awscache "github.com/aws/karpenter/pkg/cache"
 	"github.com/aws/karpenter/pkg/controllers/nodetemplate"
-	"github.com/aws/karpenter/pkg/fake"
-	"github.com/aws/karpenter/pkg/providers/securitygroup"
-	"github.com/aws/karpenter/pkg/providers/subnet"
 )
 
 var ctx context.Context
 var env *coretest.Environment
-var fakeEC2API *fake.EC2API
-var opts options.Options
-var subnetProvider *subnet.Provider
-var securityGroupProvider *securitygroup.Provider
 var nodeTemplate *v1alpha1.AWSNodeTemplate
 var controller corecontroller.Controller
-var subnetCache *cache.Cache
-var securityGroupCache *cache.Cache
+var awsEnv *test.Environment
 
 func TestAPIs(t *testing.T) {
 	ctx = TestContextWithLogger(t)
@@ -65,14 +56,11 @@ func TestAPIs(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
+	ctx = coresettings.ToContext(ctx, coretest.Settings())
+	ctx = settings.ToContext(ctx, test.Settings())
 	env = coretest.NewEnvironment(scheme.Scheme, coretest.WithCRDs(apis.CRDs...))
-
-	fakeEC2API = &fake.EC2API{}
-	subnetCache = cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	securityGroupCache = cache.New(awscache.DefaultTTL, awscache.DefaultCleanupInterval)
-	subnetProvider = subnet.NewProvider(fakeEC2API, subnetCache)
-	securityGroupProvider = securitygroup.NewProvider(fakeEC2API, securityGroupCache)
-	controller = nodetemplate.NewController(env.Client, subnetProvider, securityGroupProvider)
+	awsEnv = test.NewEnvironment(ctx, env)
+	controller = nodetemplate.NewController(env.Client, awsEnv.SubnetProvider, awsEnv.SecurityGroupProvider)
 })
 
 var _ = AfterSuite(func() {
@@ -80,8 +68,6 @@ var _ = AfterSuite(func() {
 })
 
 var _ = BeforeEach(func() {
-	ctx = injection.WithOptions(ctx, opts)
-
 	nodeTemplate = &v1alpha1.AWSNodeTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: coretest.RandomName(),
@@ -93,10 +79,7 @@ var _ = BeforeEach(func() {
 			},
 		},
 	}
-
-	fakeEC2API.Reset()
-	subnetCache.Flush()
-	securityGroupCache.Flush()
+	awsEnv.Reset()
 })
 
 var _ = AfterEach(func() {
@@ -109,7 +92,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			subnet, _ := subnetProvider.List(ctx, nodeTemplate)
+			subnet, _ := awsEnv.SubnetProvider.List(ctx, nodeTemplate)
 			subnetIDs := lo.Map(subnet, func(ec2subnet *ec2.Subnet, _ int) string {
 				return *ec2subnet.SubnetId
 			})
@@ -124,7 +107,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			subnet, _ := subnetProvider.List(ctx, nodeTemplate)
+			subnet, _ := awsEnv.SubnetProvider.List(ctx, nodeTemplate)
 			sort.Slice(subnet, func(i, j int) bool {
 				return int(*subnet[i].AvailableIpAddressCount) > int(*subnet[j].AvailableIpAddressCount)
 			})
@@ -141,7 +124,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			subnet, _ := subnetProvider.List(ctx, nodeTemplate)
+			subnet, _ := awsEnv.SubnetProvider.List(ctx, nodeTemplate)
 			sort.Slice(subnet, func(i, j int) bool {
 				return int(*subnet[i].AvailableIpAddressCount) > int(*subnet[j].AvailableIpAddressCount)
 			})
@@ -158,7 +141,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			subnet, _ := subnetProvider.List(ctx, nodeTemplate)
+			subnet, _ := awsEnv.SubnetProvider.List(ctx, nodeTemplate)
 			correctSubnetIDs := lo.Map(subnet, func(ec2subnet *ec2.Subnet, _ int) v1alpha1.SubnetStatus {
 				return v1alpha1.SubnetStatus{
 					ID:   *ec2subnet.SubnetId,
@@ -172,7 +155,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			subnet, _ := subnetProvider.List(ctx, nodeTemplate)
+			subnet, _ := awsEnv.SubnetProvider.List(ctx, nodeTemplate)
 			subnetIDs := lo.Map(subnet, func(ec2subnet *ec2.Subnet, _ int) string {
 				return *ec2subnet.SubnetId
 			})
@@ -187,7 +170,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			subnet, _ = subnetProvider.List(ctx, nodeTemplate)
+			subnet, _ = awsEnv.SubnetProvider.List(ctx, nodeTemplate)
 			sort.Slice(subnet, func(i, j int) bool {
 				return int(*subnet[i].AvailableIpAddressCount) > int(*subnet[j].AvailableIpAddressCount)
 			})
@@ -203,7 +186,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			subnet, _ := subnetProvider.List(ctx, nodeTemplate)
+			subnet, _ := awsEnv.SubnetProvider.List(ctx, nodeTemplate)
 			subnetIDs := lo.Map(subnet, func(ec2subnet *ec2.Subnet, _ int) string {
 				return *ec2subnet.SubnetId
 			})
@@ -218,7 +201,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			subnet, _ = subnetProvider.List(ctx, nodeTemplate)
+			subnet, _ = awsEnv.SubnetProvider.List(ctx, nodeTemplate)
 			correctSubnetIDs := lo.Map(subnet, func(ec2subnet *ec2.Subnet, _ int) v1alpha1.SubnetStatus {
 				return v1alpha1.SubnetStatus{
 					ID:   *ec2subnet.SubnetId,
@@ -239,7 +222,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			subnet, _ := subnetProvider.List(ctx, nodeTemplate)
+			subnet, _ := awsEnv.SubnetProvider.List(ctx, nodeTemplate)
 			subnetIDs := lo.Map(subnet, func(ec2subnet *ec2.Subnet, _ int) string {
 				return *ec2subnet.SubnetId
 			})
@@ -264,7 +247,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			securityGroupsIDs, _ := securityGroupProvider.List(ctx, nodeTemplate)
+			securityGroupsIDs, _ := awsEnv.SecurityGroupProvider.List(ctx, nodeTemplate)
 			securityGroupsIDInStatus := lo.Map(nodeTemplate.Status.SecurityGroups, func(securitygroup v1alpha1.SecurityGroupStatus, _ int) string {
 				return securitygroup.ID
 			})
@@ -274,7 +257,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			securityGroupsIDs, _ := securityGroupProvider.List(ctx, nodeTemplate)
+			securityGroupsIDs, _ := awsEnv.SecurityGroupProvider.List(ctx, nodeTemplate)
 			securityGroupsIDInStatus := lo.Map(nodeTemplate.Status.SecurityGroups, func(securitygroup v1alpha1.SecurityGroupStatus, _ int) string {
 				return securitygroup.ID
 			})
@@ -285,7 +268,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			securityGroupsIDs, _ := securityGroupProvider.List(ctx, nodeTemplate)
+			securityGroupsIDs, _ := awsEnv.SecurityGroupProvider.List(ctx, nodeTemplate)
 			correctSecurityGroupsIDs := lo.Map(securityGroupsIDs, func(securitygroup string, _ int) v1alpha1.SecurityGroupStatus {
 				return v1alpha1.SecurityGroupStatus{
 					ID: securitygroup,
@@ -298,7 +281,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			securityGroupsIDs, _ := securityGroupProvider.List(ctx, nodeTemplate)
+			securityGroupsIDs, _ := awsEnv.SecurityGroupProvider.List(ctx, nodeTemplate)
 			correctSecurityGroupsIDs := lo.Map(securityGroupsIDs, func(securitygroup string, _ int) v1alpha1.SecurityGroupStatus {
 				return v1alpha1.SecurityGroupStatus{
 					ID: securitygroup,
@@ -310,7 +293,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			securityGroupsIDs, _ := securityGroupProvider.List(ctx, nodeTemplate)
+			securityGroupsIDs, _ := awsEnv.SecurityGroupProvider.List(ctx, nodeTemplate)
 			securityGroupsIDInStatus := lo.Map(nodeTemplate.Status.SecurityGroups, func(securitygroup v1alpha1.SecurityGroupStatus, _ int) string {
 				return securitygroup.ID
 			})
@@ -320,7 +303,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			securityGroupsIDs, _ = securityGroupProvider.List(ctx, nodeTemplate)
+			securityGroupsIDs, _ = awsEnv.SecurityGroupProvider.List(ctx, nodeTemplate)
 			correctSecurityGroupsIDs := lo.Map(securityGroupsIDs, func(securitygroup string, _ int) v1alpha1.SecurityGroupStatus {
 				return v1alpha1.SecurityGroupStatus{
 					ID: securitygroup,
@@ -332,7 +315,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			securityGroupsIDs, _ := securityGroupProvider.List(ctx, nodeTemplate)
+			securityGroupsIDs, _ := awsEnv.SecurityGroupProvider.List(ctx, nodeTemplate)
 			securityGroupsIDInStatus := lo.Map(nodeTemplate.Status.SecurityGroups, func(securitygroup v1alpha1.SecurityGroupStatus, _ int) string {
 				return securitygroup.ID
 			})
@@ -342,7 +325,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			securityGroupsIDs, _ = securityGroupProvider.List(ctx, nodeTemplate)
+			securityGroupsIDs, _ = awsEnv.SecurityGroupProvider.List(ctx, nodeTemplate)
 			correctSecurityGroupsIDs := lo.Map(securityGroupsIDs, func(securitygroup string, _ int) v1alpha1.SecurityGroupStatus {
 				return v1alpha1.SecurityGroupStatus{
 					ID: securitygroup,
@@ -361,7 +344,7 @@ var _ = Describe("AWSNodeTemplateController", func() {
 			ExpectApplied(ctx, env.Client, nodeTemplate)
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(nodeTemplate))
 			nodeTemplate = ExpectExists(ctx, env.Client, nodeTemplate)
-			securityGroupsIDs, _ := securityGroupProvider.List(ctx, nodeTemplate)
+			securityGroupsIDs, _ := awsEnv.SecurityGroupProvider.List(ctx, nodeTemplate)
 			securityGroupsIDInStatus := lo.Map(nodeTemplate.Status.SecurityGroups, func(securitygroup v1alpha1.SecurityGroupStatus, _ int) string {
 				return securitygroup.ID
 			})
