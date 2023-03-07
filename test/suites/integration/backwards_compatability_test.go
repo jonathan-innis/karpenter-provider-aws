@@ -119,8 +119,6 @@ var _ = Describe("BackwardsCompatability", func() {
 			}
 		})
 		It("should succeed to link a Machine for an existing instance launched by Karpenter", func() {
-			Skip("machine linking is not yet enabled")
-
 			provider := awstest.AWSNodeTemplate(v1alpha1.AWSNodeTemplateSpec{
 				AWS: v1alpha1.AWS{
 					AMIFamily:             &v1alpha1.AMIFamilyAL2,
@@ -164,8 +162,6 @@ var _ = Describe("BackwardsCompatability", func() {
 			Expect(ok).To(BeTrue())
 		})
 		It("should succeed to link a Machine for an existing instance launched by Karpenter with provider", func() {
-			Skip("machine linking is not yet enabled")
-
 			raw := &runtime.RawExtension{}
 			lo.Must0(raw.UnmarshalJSON(lo.Must(json.Marshal(&v1alpha1.AWS{
 				AMIFamily:             &v1alpha1.AMIFamilyAL2,
@@ -263,8 +259,6 @@ var _ = Describe("BackwardsCompatability", func() {
 			}
 		})
 		It("should succeed to garbage collect a Machine that was launched by a Machine but has no Machine mapping", func() {
-			Skip("machine garbage collection is not yet enabled")
-
 			// Update the userData for the instance input with the correct provisionerName
 			rawContent, err := os.ReadFile("testdata/al2_manual_launch_userdata_input.sh")
 			Expect(err).ToNot(HaveOccurred())
