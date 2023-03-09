@@ -88,7 +88,7 @@ func NewProvider(ctx context.Context, cache *cache.Cache, ec2api ec2iface.EC2API
 }
 
 func (p *Provider) EnsureAll(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate, machine *v1alpha5.Machine,
-	instanceTypes []*cloudprovider.InstanceType, capacityType string) (map[string][]*cloudprovider.InstanceType, error) {
+	instanceTypes []*cloudprovider.InstanceType, capacityType string, tags map[string]string) (map[string][]*cloudprovider.InstanceType, error) {
 
 	p.Lock()
 	defer p.Unlock()
@@ -96,7 +96,7 @@ func (p *Provider) EnsureAll(ctx context.Context, nodeTemplate *v1alpha1.AWSNode
 	if nodeTemplate.Spec.LaunchTemplateName != nil {
 		return map[string][]*cloudprovider.InstanceType{ptr.StringValue(nodeTemplate.Spec.LaunchTemplateName): instanceTypes}, nil
 	}
-	options, err := p.createAMIOptions(ctx, nodeTemplate, machine, capacityType)
+	options, err := p.createAMIOptions(ctx, nodeTemplate, machine, capacityType, tags)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func launchTemplateName(options *amifamily.LaunchTemplate) string {
 	return fmt.Sprintf(launchTemplateNameFormat, fmt.Sprint(hash))
 }
 
-func (p *Provider) createAMIOptions(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate, machine *v1alpha5.Machine, capacityType string) (*amifamily.Options, error) {
+func (p *Provider) createAMIOptions(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate, machine *v1alpha5.Machine, capacityType string, tags map[string]string) (*amifamily.Options, error) {
 	instanceProfile, err := p.getInstanceProfile(ctx, nodeTemplate)
 	if err != nil {
 		return nil, err
@@ -154,15 +154,10 @@ func (p *Provider) createAMIOptions(ctx context.Context, nodeTemplate *v1alpha1.
 		AWSENILimitedPodDensity: settings.FromContext(ctx).EnableENILimitedPodDensity,
 		InstanceProfile:         instanceProfile,
 		SecurityGroupsIDs:       securityGroupsIDs,
-		Tags: lo.Assign(map[string]string{
-			"Name": fmt.Sprintf("%s/%s", v1alpha5.ProvisionerNameLabelKey, machine.Labels[v1alpha5.ProvisionerNameLabelKey]),
-			fmt.Sprintf("kubernetes.io/cluster/%s", settings.FromContext(ctx).ClusterName): "owned",
-			v1alpha5.ProvisionerNameLabelKey:                                               machine.Labels[v1alpha5.ProvisionerNameLabelKey],
-			v1alpha5.ManagedByLabelKey:                                                     settings.FromContext(ctx).ClusterName,
-		}, settings.FromContext(ctx).Tags, nodeTemplate.Spec.Tags),
-		Labels:    lo.Assign(machine.Labels, map[string]string{v1alpha5.LabelCapacityType: capacityType}),
-		CABundle:  p.caBundle,
-		KubeDNSIP: p.KubeDNSIP,
+		Tags:                    tags,
+		Labels:                  lo.Assign(machine.Labels, map[string]string{v1alpha5.LabelCapacityType: capacityType}),
+		CABundle:                p.caBundle,
+		KubeDNSIP:               p.KubeDNSIP,
 	}, nil
 }
 

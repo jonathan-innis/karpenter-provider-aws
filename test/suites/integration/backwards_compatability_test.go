@@ -16,7 +16,6 @@ package integration_test
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -26,15 +25,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/samber/lo"
-	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 	"github.com/aws/karpenter-core/pkg/test"
 	"github.com/aws/karpenter/pkg/apis/settings"
 	"github.com/aws/karpenter/pkg/apis/v1alpha1"
+	awserrors "github.com/aws/karpenter/pkg/errors"
 	awstest "github.com/aws/karpenter/pkg/test"
 	environmentaws "github.com/aws/karpenter/test/pkg/environment/aws"
 )
@@ -68,10 +66,8 @@ var _ = Describe("BackwardsCompatability", func() {
 	Context("MachineLink", func() {
 		var customAMI string
 		var instanceInput *ec2.RunInstancesInput
-		var provisioner *v1alpha5.Provisioner
 
 		BeforeEach(func() {
-			provisioner = test.Provisioner()
 			securityGroups := env.GetSecurityGroups(map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName})
 			subnets := env.GetSubnetNameAndIds(map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName})
 			Expect(securityGroups).ToNot(HaveLen(0))
@@ -107,10 +103,6 @@ var _ = Describe("BackwardsCompatability", func() {
 								Key:   aws.String(fmt.Sprintf("kubernetes.io/cluster/%s", settings.FromContext(env.Context).ClusterName)),
 								Value: aws.String("owned"),
 							},
-							{
-								Key:   aws.String(v1alpha5.ProvisionerNameLabelKey),
-								Value: aws.String(provisioner.Name),
-							},
 						},
 					},
 				},
@@ -119,34 +111,49 @@ var _ = Describe("BackwardsCompatability", func() {
 			}
 		})
 		It("should succeed to link a Machine for an existing instance launched by Karpenter", func() {
-			provider := awstest.AWSNodeTemplate(v1alpha1.AWSNodeTemplateSpec{
-				AWS: v1alpha1.AWS{
-					AMIFamily:             &v1alpha1.AMIFamilyAL2,
-					SecurityGroupSelector: map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName},
-					SubnetSelector:        map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName},
-				},
+			provider := awstest.AWSNodeTemplate(v1alpha1.AWSNodeTemplateSpec{AWS: v1alpha1.AWS{
+				AMIFamily:             &v1alpha1.AMIFamilyAL2,
+				SecurityGroupSelector: map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName},
+				SubnetSelector:        map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName},
+			}})
+			provisioner := test.Provisioner(test.ProvisionerOptions{
+				ProviderRef: &v1alpha5.MachineTemplateRef{Name: provider.Name},
 			})
-			provisioner.Spec.ProviderRef = &v1alpha5.MachineTemplateRef{Name: provider.Name}
-			provisioner.Spec.Requirements = []v1.NodeSelectorRequirement{
-				{
-					Key:      v1alpha1.LabelInstanceCategory,
-					Operator: v1.NodeSelectorOpExists,
-				},
-			}
-			env.ExpectCreated(provider, provisioner)
+			env.ExpectCreated(provisioner, provider)
 
 			// Update the userData for the instance input with the correct provisionerName
 			rawContent, err := os.ReadFile("testdata/al2_manual_launch_userdata_input.sh")
 			Expect(err).ToNot(HaveOccurred())
+			instanceInput.TagSpecifications[0].Tags = append(instanceInput.TagSpecifications[0].Tags, &ec2.Tag{
+				Key:   aws.String(v1alpha5.ProvisionerNameLabelKey),
+				Value: aws.String(provisioner.Name),
+			})
 			instanceInput.UserData = lo.ToPtr(base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(string(rawContent), settings.FromContext(env.Context).ClusterName,
 				settings.FromContext(env.Context).ClusterEndpoint, env.ExpectCABundle(), provisioner.Name))))
 
 			// Create an instance manually to mock Karpenter launching an instance
 			out, err := env.EC2API.RunInstances(instanceInput)
 			Expect(err).ToNot(HaveOccurred())
+			Expect(out.Instances).To(HaveLen(1))
+
+			// Always ensure that we cleanup the instance
+			DeferCleanup(func() {
+				_, err := env.EC2API.TerminateInstances(&ec2.TerminateInstancesInput{
+					InstanceIds: []*string{out.Instances[0].InstanceId},
+				})
+				if awserrors.IsNotFound(err) {
+					return
+				}
+				Expect(err).ToNot(HaveOccurred())
+			})
 
 			// Wait for the node to register with the cluster
 			env.EventuallyExpectCreatedNodeCount("==", 1)
+
+			// Restart Karpenter to start the linking process
+			env.ExpectKarpenterPodsDeleted()
+
+			// Expect that the Machine is created when Karpenter starts up
 			machines := env.EventuallyExpectCreatedMachineCount("==", 1)
 			machine := machines[0]
 
@@ -162,34 +169,48 @@ var _ = Describe("BackwardsCompatability", func() {
 			Expect(ok).To(BeTrue())
 		})
 		It("should succeed to link a Machine for an existing instance launched by Karpenter with provider", func() {
-			raw := &runtime.RawExtension{}
-			lo.Must0(raw.UnmarshalJSON(lo.Must(json.Marshal(&v1alpha1.AWS{
-				AMIFamily:             &v1alpha1.AMIFamilyAL2,
-				SecurityGroupSelector: map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName},
-				SubnetSelector:        map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName},
-			}))))
-			provisioner.Spec.Provider = raw
-			provisioner.Spec.Requirements = []v1.NodeSelectorRequirement{
-				{
-					Key:      v1alpha1.LabelInstanceCategory,
-					Operator: v1.NodeSelectorOpExists,
+			provisioner := test.Provisioner(test.ProvisionerOptions{
+				Provider: &v1alpha1.AWS{
+					AMIFamily:             &v1alpha1.AMIFamilyAL2,
+					SecurityGroupSelector: map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName},
+					SubnetSelector:        map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName},
 				},
-			}
-
+			})
 			env.ExpectCreated(provisioner)
 
 			// Update the userData for the instance input with the correct provisionerName
 			rawContent, err := os.ReadFile("testdata/al2_manual_launch_userdata_input.sh")
 			Expect(err).ToNot(HaveOccurred())
+			instanceInput.TagSpecifications[0].Tags = append(instanceInput.TagSpecifications[0].Tags, &ec2.Tag{
+				Key:   aws.String(v1alpha5.ProvisionerNameLabelKey),
+				Value: aws.String(provisioner.Name),
+			})
 			instanceInput.UserData = lo.ToPtr(base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(string(rawContent), settings.FromContext(env.Context).ClusterName,
 				settings.FromContext(env.Context).ClusterEndpoint, env.ExpectCABundle(), provisioner.Name))))
 
 			// Create an instance manually to mock Karpenter launching an instance
 			out, err := env.EC2API.RunInstances(instanceInput)
 			Expect(err).ToNot(HaveOccurred())
+			Expect(out.Instances).To(HaveLen(1))
+
+			// Always ensure that we cleanup the instance
+			DeferCleanup(func() {
+				_, err := env.EC2API.TerminateInstances(&ec2.TerminateInstancesInput{
+					InstanceIds: []*string{out.Instances[0].InstanceId},
+				})
+				if awserrors.IsNotFound(err) {
+					return
+				}
+				Expect(err).ToNot(HaveOccurred())
+			})
 
 			// Wait for the node to register with the cluster
 			env.EventuallyExpectCreatedNodeCount("==", 1)
+
+			// Restart Karpenter to start the linking process
+			env.ExpectKarpenterPodsDeleted()
+
+			// Expect that the Machine is created when Karpenter starts up
 			machines := env.EventuallyExpectCreatedMachineCount("==", 1)
 			machine := machines[0]
 
@@ -269,6 +290,17 @@ var _ = Describe("BackwardsCompatability", func() {
 			out, err := env.EC2API.RunInstances(instanceInput)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(out.Instances).To(HaveLen(1))
+
+			// Always ensure that we cleanup the instance
+			DeferCleanup(func() {
+				_, err := env.EC2API.TerminateInstances(&ec2.TerminateInstancesInput{
+					InstanceIds: []*string{out.Instances[0].InstanceId},
+				})
+				if awserrors.IsNotFound(err) {
+					return
+				}
+				Expect(err).ToNot(HaveOccurred())
+			})
 
 			// Wait for the node to register with the cluster
 			node := env.EventuallyExpectCreatedNodeCount("==", 1)[0]
