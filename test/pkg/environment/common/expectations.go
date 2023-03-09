@@ -146,6 +146,10 @@ func (env *Environment) ExpectKarpenterPodsWithOffset(offset int) []*v1.Pod {
 	return lo.Map(podList.Items, func(p v1.Pod, _ int) *v1.Pod { return &p })
 }
 
+func (env *Environment) ExpectKarpenterPodsDeleted() {
+	env.ExpectKarpenterPodsDeletedWithOffset(1)
+}
+
 func (env *Environment) ExpectKarpenterPodsDeletedWithOffset(offset int) {
 	pods := env.ExpectKarpenterPodsWithOffset(offset + 1)
 	env.ExpectDeletedWithOffset(offset+1, lo.Map(pods, func(p *v1.Pod, _ int) client.Object {
