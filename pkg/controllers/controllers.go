@@ -22,7 +22,7 @@ import (
 	"github.com/aws/karpenter/pkg/cloudprovider"
 	awscontext "github.com/aws/karpenter/pkg/context"
 	"github.com/aws/karpenter/pkg/controllers/interruption"
-	machinegarbagecollect "github.com/aws/karpenter/pkg/controllers/machine/garbagecollect"
+	machinegarbagecollect "github.com/aws/karpenter/pkg/controllers/machine/garbagecollection"
 	machinelink "github.com/aws/karpenter/pkg/controllers/machine/link"
 	"github.com/aws/karpenter/pkg/controllers/nodetemplate"
 	"github.com/aws/karpenter/pkg/providers/pricing"

@@ -18,15 +18,12 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/samber/lo"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
 	"github.com/aws/karpenter-core/pkg/test"
@@ -224,105 +221,6 @@ var _ = Describe("BackwardsCompatability", func() {
 				return aws.StringValue(t.Key) == v1alpha5.ManagedByLabelKey
 			})
 			Expect(ok).To(BeTrue())
-		})
-	})
-	Context("MachineGarbageCollect", func() {
-		var customAMI string
-		var instanceInput *ec2.RunInstancesInput
-		var provisioner *v1alpha5.Provisioner
-
-		BeforeEach(func() {
-			provisioner = test.Provisioner()
-			securityGroups := env.GetSecurityGroups(map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName})
-			subnets := env.GetSubnetNameAndIds(map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName})
-			Expect(securityGroups).ToNot(HaveLen(0))
-			Expect(subnets).ToNot(HaveLen(0))
-
-			customAMI = env.GetCustomAMI("/aws/service/eks/optimized-ami/%s/amazon-linux-2/recommended/image_id", 1)
-			instanceInput = &ec2.RunInstancesInput{
-				InstanceType: aws.String("c5.large"),
-				IamInstanceProfile: &ec2.IamInstanceProfileSpecification{
-					Name: aws.String(settings.FromContext(env.Context).DefaultInstanceProfile),
-				},
-				SecurityGroupIds: lo.Map(securityGroups, func(s environmentaws.SecurityGroup, _ int) *string {
-					return s.GroupIdentifier.GroupId
-				}),
-				SubnetId: aws.String(subnets[0].ID),
-				BlockDeviceMappings: []*ec2.BlockDeviceMapping{
-					{
-						DeviceName: aws.String("/dev/xvda"),
-						Ebs: &ec2.EbsBlockDevice{
-							Encrypted:           aws.Bool(true),
-							DeleteOnTermination: aws.Bool(true),
-							VolumeType:          aws.String(ec2.VolumeTypeGp3),
-							VolumeSize:          aws.Int64(20),
-						},
-					},
-				},
-				ImageId: aws.String(customAMI), // EKS AL2-based AMI
-				TagSpecifications: []*ec2.TagSpecification{
-					{
-						ResourceType: aws.String(ec2.ResourceTypeInstance),
-						Tags: []*ec2.Tag{
-							{
-								Key:   aws.String(fmt.Sprintf("kubernetes.io/cluster/%s", settings.FromContext(env.Context).ClusterName)),
-								Value: aws.String("owned"),
-							},
-							{
-								Key:   aws.String(v1alpha5.ProvisionerNameLabelKey),
-								Value: aws.String(provisioner.Name),
-							},
-						},
-					},
-				},
-				MinCount: aws.Int64(1),
-				MaxCount: aws.Int64(1),
-			}
-		})
-		It("should succeed to garbage collect a Machine that was launched by a Machine but has no Machine mapping", func() {
-			// Update the userData for the instance input with the correct provisionerName
-			rawContent, err := os.ReadFile("testdata/al2_manual_launch_userdata_input.sh")
-			Expect(err).ToNot(HaveOccurred())
-			instanceInput.UserData = lo.ToPtr(base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf(string(rawContent), settings.FromContext(env.Context).ClusterName,
-				settings.FromContext(env.Context).ClusterEndpoint, env.ExpectCABundle(), provisioner.Name))))
-
-			// Create an instance manually to mock Karpenter launching an instance
-			out, err := env.EC2API.RunInstances(instanceInput)
-			Expect(err).ToNot(HaveOccurred())
-			Expect(out.Instances).To(HaveLen(1))
-
-			// Always ensure that we cleanup the instance
-			DeferCleanup(func() {
-				_, err := env.EC2API.TerminateInstances(&ec2.TerminateInstancesInput{
-					InstanceIds: []*string{out.Instances[0].InstanceId},
-				})
-				if awserrors.IsNotFound(err) {
-					return
-				}
-				Expect(err).ToNot(HaveOccurred())
-			})
-
-			// Wait for the node to register with the cluster
-			node := env.EventuallyExpectCreatedNodeCount("==", 1)[0]
-
-			// Update the tags to add the karpenter.sh/managed-by tag
-			_, err = env.EC2API.CreateTagsWithContext(env.Context, &ec2.CreateTagsInput{
-				Resources: []*string{out.Instances[0].InstanceId},
-				Tags: []*ec2.Tag{
-					{
-						Key:   aws.String(v1alpha5.ManagedByLabelKey),
-						Value: aws.String(settings.FromContext(env.Context).ClusterName),
-					},
-				},
-			})
-			Expect(err).ToNot(HaveOccurred())
-
-			// Eventually expect the node and the instance to be removed (shutting-down)
-			// It could take up to 6 minutes since we re-reconcile on a 5-minute interval
-			Eventually(func(g Gomega) {
-				g.Expect(errors.IsNotFound(env.Client.Get(env.Context, client.ObjectKeyFromObject(node), node))).To(BeTrue())
-				g.Expect(lo.FromPtr(env.GetInstanceByID(aws.StringValue(out.Instances[0].InstanceId)).State.Name)).To(Equal("shutting-down"))
-			}, time.Minute*7).Should(Succeed())
 		})
 	})
 })
