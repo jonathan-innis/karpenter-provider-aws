@@ -74,8 +74,11 @@ func NewBatcher[T input, U output](ctx context.Context, options Options[T, U]) *
 	b := &Batcher[T, U]{
 		ctx:      ctx,
 		requests: map[uint64][]*request[T, U]{},
-		trigger:  make(chan struct{}),
-		options:  options,
+		// The trigger channel is buffered to ensure that an Add call is not blocked on the reader removing
+		// an element from the trigger channel. This trigger will never miss requests because we make sure that
+		// we trigger the batcher AFTER we add a requests to the group of requests
+		trigger: make(chan struct{}, 1),
+		options: options,
 	}
 	go b.run()
 	return b
@@ -114,16 +117,31 @@ func OneBucketHasher[T input](ctx context.Context, input *T) uint64 {
 }
 
 func (b *Batcher[T, U]) run() {
+	wg := sync.WaitGroup{}
 	for {
 		select {
 		// context that we started with has completed so the app is shutting down
 		case <-b.ctx.Done():
+			// wait for the runCalls goroutines to complete before closing out
+			wg.Wait()
 			return
 		case <-b.trigger:
 			// wait to start the batch of create fleet calls
 		}
 		b.waitForIdle()
-		b.runCalls()
+
+		// Copy the requests so that we can continue batching
+		b.mu.Lock()
+		requests := b.requests
+		b.requests = map[uint64][]*request[T, U]{}
+		b.mu.Unlock()
+
+		// Initiate a thread to run the request calls while batching more calls
+		wg.Add(1)
+		go func(req map[uint64][]*request[T, U]) {
+			defer wg.Done()
+			b.runCalls(req)
+		}(requests)
 	}
 }
 
@@ -133,6 +151,8 @@ func (b *Batcher[T, U]) waitForIdle() {
 	count := 0
 	for {
 		select {
+		case <-b.ctx.Done():
+			return
 		case <-b.trigger:
 			count++
 			if b.options.MaxItems != 0 && count >= b.options.MaxItems {
@@ -150,12 +170,7 @@ func (b *Batcher[T, U]) waitForIdle() {
 	}
 }
 
-func (b *Batcher[T, U]) runCalls() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	requestMap := b.requests
-	b.requests = map[uint64][]*request[T, U]{}
-
+func (b *Batcher[T, U]) runCalls(requestMap map[uint64][]*request[T, U]) {
 	for _, requestBatch := range requestMap {
 		requestIdx := 0
 		for _, result := range b.options.BatchExecutor(requestBatch[0].ctx, lo.Map(requestBatch, func(req *request[T, U], _ int) *T { return req.input })) {

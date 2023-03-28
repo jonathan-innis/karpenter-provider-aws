@@ -3,8 +3,8 @@ module github.com/aws/karpenter/tools/allocatable-diff
 go 1.20
 
 require (
-	github.com/aws/karpenter v0.27.0
-	github.com/aws/karpenter-core v0.27.0
+	github.com/aws/karpenter v0.27.1-0.20230327214157-b58d4cd25159
+	github.com/aws/karpenter-core v0.27.1-0.20230327194120-eb4758b5696f
 	github.com/samber/lo v1.37.0
 	k8s.io/api v0.26.1
 	k8s.io/apimachinery v0.26.1
@@ -44,7 +44,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
-	github.com/pelletier/go-toml/v2 v2.0.6 // indirect
+	github.com/pelletier/go-toml/v2 v2.0.7 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	go.uber.org/atomic v1.9.0 // indirect

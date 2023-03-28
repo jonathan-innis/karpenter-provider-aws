@@ -31,8 +31,8 @@ type CreateFleetBatcher struct {
 
 func NewCreateFleetBatcher(ctx context.Context, ec2api ec2iface.EC2API) *CreateFleetBatcher {
 	options := Options[ec2.CreateFleetInput, ec2.CreateFleetOutput]{
-		IdleTimeout:   35 * time.Millisecond,
-		MaxTimeout:    1 * time.Second,
+		IdleTimeout:   time.Second,
+		MaxTimeout:    5 * time.Second,
 		MaxItems:      1_000,
 		RequestHasher: DefaultHasher[ec2.CreateFleetInput],
 		BatchExecutor: execCreateFleetBatch(ec2api),
