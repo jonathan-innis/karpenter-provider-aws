@@ -25,12 +25,13 @@ import (
 	"github.com/samber/lo"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
-	policyv1 "k8s.io/api/policy/v1beta1"
+	policyv1 "k8s.io/api/policy/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
@@ -80,10 +81,35 @@ func (env *Environment) BeforeEach(opts ...Option) {
 		defer fmt.Println("------- END BEFORE -------")
 	}
 	env.Context = injection.WithSettingsOrDie(env.Context, env.KubeClient, apis.Settings...)
-
 	stop = make(chan struct{})
 	testStartTime = time.Now()
 
+	// Expect that the cluster is in a clean state to run the integration tests against it
+	env.ExpectCleanCluster(opts...)
+
+	// If the test is labeled as NoWatch, then the node/pod monitor will just list at the beginning
+	// of the test rather than perform a watch during it
+	if !options.DisableDebug && !lo.Contains(CurrentSpecReport().Labels(), NoWatch) {
+		env.startMachineMonitor(stop)
+		env.startNodeMonitor(stop)
+		env.startPodMonitor(stop)
+	}
+	var provisioners v1alpha5.ProvisionerList
+	Expect(env.Client.List(env.Context, &provisioners)).To(Succeed())
+	Expect(provisioners.Items).To(HaveLen(0), "expected no provisioners to exist")
+	env.Monitor.Reset()
+	env.StartingNodeCount = env.Monitor.NodeCountAtReset()
+}
+
+func (env *Environment) ExpectCleanCluster(opts ...Option) {
+	options := ResolveOptions(opts)
+
+	// Expect no machines exist
+	var machines v1alpha5.MachineList
+	Expect(env.Client.List(env.Context, &machines)).To(Succeed())
+	Expect(machines.Items).To(HaveLen(0))
+
+	// Expect no untainted/unschedulable nodes exist and print out node details
 	var nodes v1.NodeList
 	Expect(env.Client.List(env.Context, &nodes)).To(Succeed())
 	if !options.DisableDebug {
@@ -96,7 +122,7 @@ func (env *Environment) BeforeEach(opts ...Option) {
 			Fail(fmt.Sprintf("expected system pool node %s to be tainted", node.Name))
 		}
 	}
-
+	// Expect no provisionable pods exist and print out pod details
 	var pods v1.PodList
 	Expect(env.Client.List(env.Context, &pods)).To(Succeed())
 	if !options.DisableDebug {
@@ -110,17 +136,15 @@ func (env *Environment) BeforeEach(opts ...Option) {
 		Expect(pods.Items[i].Namespace).ToNot(Equal("default"),
 			fmt.Sprintf("expected no pods in the `default` namespace, found %s/%s", pods.Items[i].Namespace, pods.Items[i].Name))
 	}
-	// If the test is labeled as NoWatch, then the node/pod monitor will just list at the beginning
-	// of the test rather than perform a watch during it
-	if !options.DisableDebug && !lo.Contains(CurrentSpecReport().Labels(), NoWatch) {
-		env.startNodeMonitor(stop)
-		env.startPodMonitor(stop)
-	}
-	var provisioners v1alpha5.ProvisionerList
-	Expect(env.Client.List(env.Context, &provisioners)).To(Succeed())
-	Expect(provisioners.Items).To(HaveLen(0), "expected no provisioners to exist")
-	env.Monitor.Reset()
-	env.StartingNodeCount = env.Monitor.NodeCountAtReset()
+}
+
+func getMachineInformation(m *v1alpha5.Machine) string {
+	return fmt.Sprintf("machine %s ready=%t launched=%t registered=%t initialized=%t", m.Name,
+		m.StatusConditions().IsHappy(),
+		m.StatusConditions().GetCondition(v1alpha5.MachineLaunched).IsTrue(),
+		m.StatusConditions().GetCondition(v1alpha5.MachineRegistered).IsTrue(),
+		m.StatusConditions().GetCondition(v1alpha5.MachineInitialized).IsTrue(),
+	)
 }
 
 func (env *Environment) getNodeInformation(n *v1.Node) string {
@@ -167,6 +191,26 @@ func getEventInformation(o v1.ObjectReference, el *v1.EventList) string {
 		)
 	}
 	return sb.String()
+}
+
+// startMachineMonitor monitors all machines that are provisioned during the test run
+func (env *Environment) startMachineMonitor(stop <-chan struct{}) {
+	factory := informers.NewSharedInformerFactoryWithOptions(env.KubeClient, time.Second*30)
+	machineInformer := lo.Must(factory.ForResource(schema.GroupVersionResource{Group: v1alpha5.SchemeGroupVersion.Group, Version: v1alpha5.SchemeGroupVersion.Version, Resource: "Machine"})).Informer()
+	machineInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			fmt.Printf("[CREATED %s] %s\n", time.Now().Format(time.RFC3339), getMachineInformation(obj.(*v1alpha5.Machine)))
+		},
+		UpdateFunc: func(oldObj interface{}, newObj interface{}) {
+			if getMachineInformation(oldObj.(*v1alpha5.Machine)) != getMachineInformation(newObj.(*v1alpha5.Machine)) {
+				fmt.Printf("[UPDATED %s] %s\n", time.Now().Format(time.RFC3339), getMachineInformation(newObj.(*v1alpha5.Machine)))
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			fmt.Printf("[DELETED %s] %s\n", time.Now().Format(time.RFC3339), getMachineInformation(obj.(*v1alpha5.Machine)))
+		},
+	})
+	factory.Start(stop)
 }
 
 // startPodMonitor monitors all pods that are provisioned in a namespace outside kube-system
@@ -223,7 +267,7 @@ func (env *Environment) Cleanup(opts ...Option) {
 		fmt.Println("------- START CLEANUP -------")
 		defer fmt.Println("------- END CLEANUP -------")
 	}
-	env.CleanupObjects(CleanableObjects)
+	env.CleanupObjects(CleanableObjects...)
 	env.eventuallyExpectScaleDown()
 	env.ExpectNoCrashes()
 }
@@ -236,7 +280,7 @@ func (env *Environment) ForceCleanup(opts ...Option) {
 	}
 
 	// Delete all the nodes if they weren't deleted by the provisioner propagation
-	env.CleanupObjects(ForceCleanableObjects)
+	env.CleanupObjects(ForceCleanableObjects...)
 }
 
 func (env *Environment) AfterEach(opts ...Option) {
@@ -254,7 +298,7 @@ func (env *Environment) AfterEach(opts ...Option) {
 	env.printControllerLogs(&v1.PodLogOptions{Container: "controller"})
 }
 
-func (env *Environment) CleanupObjects(cleanableObjects []functional.Pair[client.Object, client.ObjectList]) {
+func (env *Environment) CleanupObjects(cleanableObjects ...functional.Pair[client.Object, client.ObjectList]) {
 	namespaces := &v1.NamespaceList{}
 	Expect(env.Client.List(env, namespaces)).To(Succeed())
 	wg := sync.WaitGroup{}
