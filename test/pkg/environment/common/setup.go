@@ -30,9 +30,13 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -195,19 +199,28 @@ func getEventInformation(o v1.ObjectReference, el *v1.EventList) string {
 
 // startMachineMonitor monitors all machines that are provisioned during the test run
 func (env *Environment) startMachineMonitor(stop <-chan struct{}) {
-	factory := informers.NewSharedInformerFactoryWithOptions(env.KubeClient, time.Second*30)
-	machineInformer := lo.Must(factory.ForResource(schema.GroupVersionResource{Group: v1alpha5.SchemeGroupVersion.Group, Version: v1alpha5.SchemeGroupVersion.Version, Resource: "Machine"})).Informer()
+	resource := schema.GroupVersionResource{Group: v1alpha5.SchemeGroupVersion.Group, Version: v1alpha5.SchemeGroupVersion.Version, Resource: "machines"}
+	factory := dynamicinformer.NewDynamicSharedInformerFactory(lo.Must(dynamic.NewForConfig(env.Config)), time.Second*30)
+	machineInformer := factory.ForResource(resource).Informer()
 	machineInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			fmt.Printf("[CREATED %s] %s\n", time.Now().Format(time.RFC3339), getMachineInformation(obj.(*v1alpha5.Machine)))
+			var machine v1alpha5.Machine
+			lo.Must0(runtime.DefaultUnstructuredConverter.FromUnstructured(obj.(*unstructured.Unstructured).UnstructuredContent(), &machine))
+			fmt.Printf("[CREATED %s] %s\n", time.Now().Format(time.RFC3339), getMachineInformation(&machine))
 		},
 		UpdateFunc: func(oldObj interface{}, newObj interface{}) {
-			if getMachineInformation(oldObj.(*v1alpha5.Machine)) != getMachineInformation(newObj.(*v1alpha5.Machine)) {
-				fmt.Printf("[UPDATED %s] %s\n", time.Now().Format(time.RFC3339), getMachineInformation(newObj.(*v1alpha5.Machine)))
+			var oldMachine v1alpha5.Machine
+			var newMachine v1alpha5.Machine
+			lo.Must0(runtime.DefaultUnstructuredConverter.FromUnstructured(oldObj.(*unstructured.Unstructured).UnstructuredContent(), &oldMachine))
+			lo.Must0(runtime.DefaultUnstructuredConverter.FromUnstructured(newObj.(*unstructured.Unstructured).UnstructuredContent(), &newMachine))
+			if getMachineInformation(&oldMachine) != getMachineInformation(&newMachine) {
+				fmt.Printf("[UPDATED %s] %s\n", time.Now().Format(time.RFC3339), getMachineInformation(&newMachine))
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			fmt.Printf("[DELETED %s] %s\n", time.Now().Format(time.RFC3339), getMachineInformation(obj.(*v1alpha5.Machine)))
+			var machine v1alpha5.Machine
+			lo.Must0(runtime.DefaultUnstructuredConverter.FromUnstructured(obj.(*unstructured.Unstructured).UnstructuredContent(), &machine))
+			fmt.Printf("[DELETED %s] %s\n", time.Now().Format(time.RFC3339), getMachineInformation(&machine))
 		},
 	})
 	factory.Start(stop)

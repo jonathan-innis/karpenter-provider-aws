@@ -20,7 +20,7 @@ import (
 	awstest "github.com/aws/karpenter/pkg/test"
 )
 
-var _ = Describe("StandaloneMachine", func() {
+var _ = Describe("Machine", func() {
 	var nodeTemplate *v1alpha1.AWSNodeTemplate
 	BeforeEach(func() {
 		nodeTemplate = awstest.AWSNodeTemplate(v1alpha1.AWSNodeTemplateSpec{AWS: v1alpha1.AWS{
@@ -88,10 +88,16 @@ var _ = Describe("StandaloneMachine", func() {
 						Value:  "other-custom-value",
 					},
 				},
+				Resources: v1alpha5.ResourceRequirements{
+					Requests: v1.ResourceList{
+						v1.ResourceCPU:    resource.MustParse("3"),
+						v1.ResourceMemory: resource.MustParse("2Gi"),
+					},
+				},
 				Kubelet: &v1alpha5.KubeletConfiguration{
 					ContainerRuntime: lo.ToPtr("containerd"),
 					MaxPods:          lo.ToPtr[int32](110),
-					PodsPerCore:      lo.ToPtr[int32](110),
+					PodsPerCore:      lo.ToPtr[int32](10),
 					SystemReserved: v1.ResourceList{
 						v1.ResourceCPU:              resource.MustParse("200m"),
 						v1.ResourceMemory:           resource.MustParse("200Mi"),
@@ -127,8 +133,8 @@ var _ = Describe("StandaloneMachine", func() {
 						"pid.available":      {Duration: time.Minute * 2},
 					},
 					EvictionMaxPodGracePeriod:   lo.ToPtr[int32](120),
-					ImageGCHighThresholdPercent: lo.ToPtr[int32](50),
-					ImageGCLowThresholdPercent:  lo.ToPtr[int32](10),
+					ImageGCHighThresholdPercent: lo.ToPtr[int32](85),
+					ImageGCLowThresholdPercent:  lo.ToPtr[int32](80),
 				},
 				MachineTemplateRef: &v1alpha5.MachineTemplateRef{
 					Name: nodeTemplate.Name,
