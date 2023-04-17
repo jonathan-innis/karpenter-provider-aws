@@ -66,14 +66,9 @@ func processMessage(queueMessage *sqs.Message, config *config) {
 	}
 	log.Printf("running tests for notification message %#v", notificationMessage)
 
-	for pipeline, filters := range pipelinesAndFilters {
-		if len(filters) == 0 {
-			runTektonCommand(notificationMessage, pipeline, "")
-			continue
-		}
-
-		for _, filter := range filters {
-			runTektonCommand(notificationMessage, pipeline, filter)
+	for pipeline, suites := range pipelinesAndSuites {
+		for _, suite := range suites {
+			runTektonCommand(notificationMessage, pipeline, suite)
 		}
 	}
 
@@ -82,8 +77,8 @@ func processMessage(queueMessage *sqs.Message, config *config) {
 	}
 }
 
-func runTektonCommand(notificationMessage *notificationMessage, pipeline Pipeline, filter Filter) {
-	tknArgs := tknArgs(notificationMessage, pipeline, filter)
+func runTektonCommand(notificationMessage *notificationMessage, pipeline Pipeline, suite Suite) {
+	tknArgs := tknArgs(notificationMessage, pipeline, suite)
 	if err := runTests(notificationMessage, tknArgs...); err != nil {
 		log.Printf("failed running pipeline %s tests on message. %s", pipeline, err)
 	}
