@@ -114,6 +114,7 @@ spec:
         --approve
 
   - name: update-hostname-type
+    image: public.ecr.aws/karpenter/tools:latest
     script: |
       # Updates the hostname type of all cluster subnets to be the passed hostname type
       aws ec2 describe-subnets \
