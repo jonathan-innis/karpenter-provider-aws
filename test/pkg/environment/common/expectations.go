@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,stylecheck
@@ -27,6 +28,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/samber/lo"
 	appsv1 "k8s.io/api/apps/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -124,8 +126,7 @@ func (env *Environment) ExpectSettingsReplaced(data ...map[string]string) {
 	env.ExpectCreatedOrUpdated(cm)
 
 	// Get the karpenter pods and delete them to restart the containers
-	env.ExpectKarpenterPodsDeletedWithOffset(1)
-	env.EventuallyExpectKarpenterPodsHealthyWithOffset(1)
+	env.EventuallyExpectKarpenterRestartedWithOffset(1)
 }
 
 // ExpectSettingsOverridden overrides specific values specified through data. It only overrides
@@ -143,8 +144,7 @@ func (env *Environment) ExpectSettingsOverridden(data ...map[string]string) {
 	env.ExpectCreatedOrUpdated(cm)
 
 	// Get the karpenter pods and delete them to restart the containers
-	env.ExpectKarpenterPodsDeletedWithOffset(1)
-	env.EventuallyExpectKarpenterPodsHealthyWithOffset(1)
+	env.EventuallyExpectKarpenterRestartedWithOffset(1)
 }
 
 func (env *Environment) ExpectFound(obj client.Object) {
@@ -163,6 +163,15 @@ func (env *Environment) EventuallyExpectHealthy(pods ...*v1.Pod) {
 	}
 }
 
+func (env *Environment) EventuallyExpectKarpenterRestarted() {
+	env.EventuallyExpectKarpenterRestartedWithOffset(1)
+}
+
+func (env *Environment) EventuallyExpectKarpenterRestartedWithOffset(offset int) {
+	env.ExpectKarpenterPodsDeletedWithOffset(offset + 1)
+	env.EventuallyExpectKarpenterPodsHealthyWithOffset(offset + 1)
+}
+
 func (env *Environment) ExpectKarpenterPodsWithOffset(offset int) []*v1.Pod {
 	podList := &v1.PodList{}
 	ExpectWithOffset(offset+1, env.Client.List(env.Context, podList, client.MatchingLabels{
@@ -171,8 +180,17 @@ func (env *Environment) ExpectKarpenterPodsWithOffset(offset int) []*v1.Pod {
 	return lo.Map(podList.Items, func(p v1.Pod, _ int) *v1.Pod { return &p })
 }
 
-func (env *Environment) ExpectKarpenterPodsDeleted() {
-	env.ExpectKarpenterPodsDeletedWithOffset(1)
+func (env *Environment) ExpectActiveKarpenterPodWithOffset(offset int) *v1.Pod {
+	lease := &coordinationv1.Lease{}
+	ExpectWithOffset(offset+1, env.Client.Get(env.Context, types.NamespacedName{Name: "karpenter-leader-election", Namespace: "karpenter"}, lease)).To(Succeed())
+
+	// Holder identity for lease is always in the format "<pod-name>_<pseudo-random-value>
+	holderArr := strings.Split(lo.FromPtr(lease.Spec.HolderIdentity), "_")
+	ExpectWithOffset(offset+1, len(holderArr)).To(BeNumerically(">", 0))
+
+	pod := &v1.Pod{}
+	ExpectWithOffset(offset+1, env.Client.Get(env.Context, types.NamespacedName{Name: holderArr[0], Namespace: "karpenter"}, pod)).To(Succeed())
+	return pod
 }
 
 func (env *Environment) ExpectKarpenterPodsDeletedWithOffset(offset int) {
@@ -427,21 +445,34 @@ func (env *Environment) GetDaemonSetCount(prov *v1alpha5.Provisioner) int {
 	})
 }
 
-func (env *Environment) ExpectQuery(query string) model.Value {
-	value, warn, err := env.PromClient.Query(env.Context, query, time.Now())
+func (env *Environment) ExpectQuery(metric string, labels map[string]string) model.Vector {
+	karpenterPod := env.ExpectActiveKarpenterPodWithOffset(1)
+
+	labels = lo.Assign(labels, map[string]string{"pod": karpenterPod.Name, "namespace": karpenterPod.Namespace})
+	value, warn, err := env.PromClient.Query(env.Context, buildQueryString(metric, labels), time.Now())
 	Expect(warn).To(HaveLen(0))
 	Expect(err).To(BeNil())
-	return value
+	return value.(model.Vector)
 }
 
-func (env *Environment) ExpectRangeQuery(query string, r promv1.Range) model.Value {
-	value, warn, err := env.PromClient.QueryRange(env.Context, query, r)
+func (env *Environment) ExpectRangeQuery(metric string, labels map[string]string, r promv1.Range) model.Vector {
+	karpenterPod := env.ExpectActiveKarpenterPodWithOffset(1)
+
+	labels = lo.Assign(labels, map[string]string{"pod": karpenterPod.Name, "namespace": karpenterPod.Namespace})
+	value, warn, err := env.PromClient.QueryRange(env.Context, buildQueryString(metric, labels), r)
 	Expect(warn).To(HaveLen(0))
 	Expect(err).To(BeNil())
-	return value
+	return value.(model.Vector)
 }
 
 // ExpectSLOsMaintained describes a set of expectations that Karpenter MUST meet in order to ensure its SLOs
 func (env *Environment) ExpectSLOsMaintained() {
 
+}
+
+func buildQueryString(metric string, labels map[string]string) string {
+	if len(labels) == 0 {
+		return metric
+	}
+	return fmt.Sprintf(`%s{%s}`, metric, strings.Join(lo.MapToSlice(labels, func(k, v string) string { return fmt.Sprintf(`%s="%s"`, k, v) }), ","))
 }
