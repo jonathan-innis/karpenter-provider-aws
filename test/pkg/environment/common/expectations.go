@@ -181,15 +181,10 @@ func (env *Environment) ExpectKarpenterPodsWithOffset(offset int) []*v1.Pod {
 }
 
 func (env *Environment) ExpectActiveKarpenterPodWithOffset(offset int) *v1.Pod {
-	lease := &coordinationv1.Lease{}
-	ExpectWithOffset(offset+1, env.Client.Get(env.Context, types.NamespacedName{Name: "karpenter-leader-election", Namespace: "karpenter"}, lease)).To(Succeed())
-
-	// Holder identity for lease is always in the format "<pod-name>_<pseudo-random-value>
-	holderArr := strings.Split(lo.FromPtr(lease.Spec.HolderIdentity), "_")
-	ExpectWithOffset(offset+1, len(holderArr)).To(BeNumerically(">", 0))
+	podName := env.GetKarpenterPodNameWithLease(offset)
 
 	pod := &v1.Pod{}
-	ExpectWithOffset(offset+1, env.Client.Get(env.Context, types.NamespacedName{Name: holderArr[0], Namespace: "karpenter"}, pod)).To(Succeed())
+	ExpectWithOffset(offset+1, env.Client.Get(env.Context, types.NamespacedName{Name: podName, Namespace: "karpenter"}, pod)).To(Succeed())
 	return pod
 }
 
@@ -211,12 +206,24 @@ func (env *Environment) EventuallyExpectKarpenterPodsHealthyWithOffset(offset in
 				HaveField("Type", Equal(v1.PodReady)),
 				HaveField("Status", Equal(v1.ConditionTrue)),
 			)))
+			g.Expect(pod.Status.Phase).To(Equal(v1.PodRunning))
+			g.Expect(pod.DeletionTimestamp.IsZero()).To(BeTrue())
 		}
+		g.Expect(env.GetKarpenterPodNameWithLease(offset)).To(BeElementOf(lo.Map(pods, func(po *v1.Pod, _ int) string {
+			return po.Name
+		})))
 	}).Should(Succeed())
+}
 
-	// We add this delay in here since we currently don't have the liveness/readiness probe working on the webhook
-	// which means there's a bit of time after the pods go ready that the webhook isn't actually ready to receive traffic yet
-	time.Sleep(time.Second * 5)
+func (env *Environment) GetKarpenterPodNameWithLease(offset int) string {
+	lease := &coordinationv1.Lease{}
+	ExpectWithOffset(offset+1, env.Client.Get(env.Context, types.NamespacedName{Name: "karpenter-leader-election", Namespace: "karpenter"}, lease)).To(Succeed())
+
+	// Holder identity for lease is always in the format "<pod-name>_<pseudo-random-value>
+	holderArr := strings.Split(lo.FromPtr(lease.Spec.HolderIdentity), "_")
+	ExpectWithOffset(offset+1, len(holderArr)).To(BeNumerically(">", 0))
+
+	return holderArr[0]
 }
 
 func (env *Environment) EventuallyExpectPendingPodCount(selector labels.Selector, numPods int) {
@@ -456,7 +463,7 @@ func (env *Environment) GetDaemonSetCount(prov *v1alpha5.Provisioner) int {
 	})
 }
 
-func (env *Environment) ExpectQuery(metric string, labels map[string]string) model.Vector {
+func (env *Environment) ExpectPrometheusQuery(metric string, labels map[string]string) model.Value {
 	karpenterPod := env.ExpectActiveKarpenterPodWithOffset(1)
 
 	labels = lo.Assign(labels, map[string]string{"pod": karpenterPod.Name, "namespace": karpenterPod.Namespace})
