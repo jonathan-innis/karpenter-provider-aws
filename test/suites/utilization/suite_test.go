@@ -27,8 +27,6 @@ import (
 	"github.com/aws/karpenter-core/pkg/test"
 	"github.com/aws/karpenter/pkg/apis/settings"
 	"github.com/aws/karpenter/pkg/apis/v1alpha1"
-	"github.com/aws/karpenter/test/pkg/debug"
-
 	awstest "github.com/aws/karpenter/pkg/test"
 	"github.com/aws/karpenter/test/pkg/environment/aws"
 )
@@ -47,7 +45,7 @@ var _ = BeforeEach(func() { env.BeforeEach() })
 var _ = AfterEach(func() { env.Cleanup() })
 var _ = AfterEach(func() { env.AfterEach() })
 
-var _ = Describe("Utilization", Label(debug.NoWatch), Label(debug.NoEvents), func() {
+var _ = Describe("Utilization", func() {
 	It("should provision one pod per node", func() {
 		provider := awstest.AWSNodeTemplate(v1alpha1.AWSNodeTemplateSpec{AWS: v1alpha1.AWS{
 			SecurityGroupSelector: map[string]string{"karpenter.sh/discovery": settings.FromContext(env.Context).ClusterName},

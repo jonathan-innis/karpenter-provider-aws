@@ -30,8 +30,6 @@ import (
 	"github.com/aws/karpenter-core/pkg/test"
 	"github.com/aws/karpenter/pkg/apis/settings"
 	"github.com/aws/karpenter/pkg/apis/v1alpha1"
-	"github.com/aws/karpenter/test/pkg/debug"
-
 	awstest "github.com/aws/karpenter/pkg/test"
 )
 
@@ -235,7 +233,7 @@ var _ = Describe("Scheduling", Ordered, ContinueOnFailure, func() {
 		env.EventuallyExpectHealthy(pod)
 		env.ExpectCreatedNodeCount("==", 1)
 	})
-	It("should provision a node for a deployment", Label(debug.NoWatch), Label(debug.NoEvents), func() {
+	It("should provision a node for a deployment", func() {
 		deployment := test.Deployment(test.DeploymentOptions{Replicas: 50})
 		env.ExpectCreated(provisioner, provider, deployment)
 		env.EventuallyExpectHealthyPodCount(labels.SelectorFromSet(deployment.Spec.Selector.MatchLabels), int(*deployment.Spec.Replicas))
