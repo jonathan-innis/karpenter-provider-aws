@@ -100,7 +100,19 @@ We release a snapshot release for every commit that gets merged into the main re
 Snapshot releases are suitable for testing, and troubleshooting but users should exercise great care if they decide to use them in production environments.
 Snapshot releases are tagged with the git commit hash prefixed by the Karpenter major version. For example `v0-fc17bfc89ebb30a3b102a86012b3e3992ec08adf`. For more detailed examples on how to use snapshot releases look under "Usage" in [Karpenter Helm Chart](https://gallery.ecr.aws/karpenter/karpenter).
 
-## Released Upgrade Notes
+## Kubernetes Upgrade Nodes
+
+Karpenter relies on Kubernetes APIs and compatability with Kubernetes scheduling logic. As a result, Kuberntes upgrades have the potential to introduce incompatabilities or changes that you should be aware of before upgrading to that verison of Kubernetes.
+
+### Upgrading to 1.27+ [Upcoming]
+
+* 
+
+### Upgrading to 1.25+
+
+* Karpenter is not supported for Kubernetes 1.25 for Karpenter versions `<v0.22.0`. Karpenter introduced an upgrade to the `v1` PDB Kubernetes API in `v0.22.0` which enabled support for `1.25+` of Kubernetes and broke compatability with Kubernetes versions `<1.21`
+
+## Release Upgrade Notes
 
 ### Upgrading to v0.28.0+
 * The `extraObjects` value is now removed from the Helm chart. Having this value in the chart proved to not work in the majority of Karpenter installs and often led to anti-patterns, where the Karpenter resources installed to manage Karpenter's capacity were directly tied to the install of the Karpenter controller deployments. The Karpenter team recommends that, if you want to install Karpenter manifests alongside the Karpenter helm chart, to do so by creating a separate chart for the manifests, creating a dependency on the controller chart.
