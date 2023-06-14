@@ -19,17 +19,19 @@ runs:
     - shell: bash
       run: |
         if [[ ${{ inputs.event_name }} == "schedule" ]]; then
-          echo RUN_NAME="${{ inputs.suite }}-periodic" >> $GITHUB_ENV
+          RUN_NAME="${{ inputs.suite }}-periodic"
         else
-          echo RUN_NAME="${{ inputs.suite }}-${GITHUB_SHA::7}" >> $GITHUB_ENV
+          RUN_NAME="${{ inputs.suite }}-${GITHUB_SHA::7}"
         fi
+        # Convert the RUN_NAME to all lowercase
+        echo RUN_NAME=${RUN_NAME,,} >> $GITHUB_ENV
     - uses: ./actions/.github/actions/e2e/slack/send-message
       if: ${{ job.status == 'success' }}
       with:
         url: ${{ inputs.url }}
-        message: ":white_check_mark: ${RUN_NAME} suite succeeded"
+        message: ":white_check_mark: ${{ env.RUN_NAME }} suite succeeded"
     - uses: ./actions/.github/actions/e2e/slack/send-message
       if: ${{ job.status == 'failure' }}
       with:
         url: ${{ inputs.url }}
-        message: ":x: ${RUN_NAME} suite failed"
+        message: ":x: ${{ env.RUN_NAME }} suite failed"
