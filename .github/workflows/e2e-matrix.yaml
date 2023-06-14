@@ -9,6 +9,19 @@ on:
     types: [completed]
   workflow_dispatch:
 jobs:
+  resolve-git-ref:
+    if: github.repository == 'aws/karpenter'
+    steps:
+      # Download the artifact and resolve the commit if initiated by PR snapshot
+      - uses: ./.github/actions/download-artifact
+        if: github.event_name == "workflow_run"
+      - run: |
+          echo GIT_REF=$(tail -n 1 /tmp/artifacts/metadata.txt) >> $GITHUB_ENV
+        if: github.event_name == "workflow_run"
+      # Resolve it to main if not initiated by a PR snapshot
+      - run: |
+          echo GIT_REF=main >> $GITHUB_ENV
+        if: github.event_name != "workflow_run"
   e2e:
     if: github.repository == 'aws/karpenter'
     strategy:
@@ -19,6 +32,7 @@ jobs:
     with:
       suite: ${{ matrix.suite }}
       git_repo: aws/karpenter
+      git_ref: ${GIT_REF}
       event_name: ${{ github.event_name }}
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -27,6 +41,7 @@ jobs:
     uses: ./.github/workflows/e2e-upgrade.yaml
     with:
       from_git_ref: v0.26.1
+      to_git_ref: ${GIT_REF}
       git_repo: aws/karpenter
       event_name: ${{ github.event_name }}
     secrets:
