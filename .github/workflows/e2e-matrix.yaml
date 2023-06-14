@@ -9,8 +9,25 @@ on:
     types: [completed]
   workflow_dispatch:
 jobs:
+  resolve-git-ref:
+    runs-on: ubuntu-latest
+    outputs:
+      GIT_REF: ${{ steps.resolve-git-ref.outputs.GIT_REF }}
+    steps:
+      # Download the artifact and resolve the commit if initiated by PR snapshot
+      # Otherwise, use the currently checked-out branch to run the E2E tests against
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/download-artifact
+        if: github.event_name == 'workflow_run'
+      - id: resolve-git-ref
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo GIT_REF=$(tail -n 1 /tmp/artifacts/metadata.txt) >> $GITHUB_OUTPUT
+          else
+            echo GIT_REF="" >> $GITHUB_OUTPUT
+          fi
   e2e:
-    if: github.repository == 'aws/karpenter'
+    needs: [resolve-git-ref]
     strategy:
       fail-fast: false
       matrix:
@@ -19,14 +36,16 @@ jobs:
     with:
       suite: ${{ matrix.suite }}
       git_repo: aws/karpenter
+      git_ref: ${{ needs.resolve-git-ref.outputs.GIT_REF }}
       event_name: ${{ github.event_name }}
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
   e2e-upgrade:
-    if: github.repository == 'aws/karpenter'
+    needs: [resolve-git-ref]
     uses: ./.github/workflows/e2e-upgrade.yaml
     with:
       from_git_ref: v0.26.1
+      to_git_ref: ${{ needs.resolve-git-ref.outputs.GIT_REF }}
       git_repo: aws/karpenter
       event_name: ${{ github.event_name }}
     secrets:

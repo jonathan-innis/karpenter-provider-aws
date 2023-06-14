@@ -29,6 +29,8 @@ jobs:
   run-suite:
     runs-on: ubuntu-latest
     steps:
+      - run: |
+          echo "Running on GIT_REF: ${{ inputs.git_ref }}"
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
