@@ -19,14 +19,21 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+
+	"github.com/samber/lo"
 )
 
 type Windows struct {
 	Options
 }
 
-// nolint:gocyclo
 func (w Windows) Script() (string, error) {
+	userData := w.mergeCustomUserData(lo.Compact([]string{lo.FromPtr(w.CustomUserData), w.windowsBootstrapScript()})...)
+	return base64.StdEncoding.EncodeToString([]byte(userData)), nil
+}
+
+// nolint:gocyclo
+func (w Windows) windowsBootstrapScript() string {
 	var userData bytes.Buffer
 	userData.WriteString("<powershell>\n")
 	userData.WriteString("[string]$EKSBootstrapScriptFile = \"$env:ProgramFiles\\Amazon\\EKS\\Start-EKSBootstrap.ps1\"\n")
@@ -44,5 +51,26 @@ func (w Windows) Script() (string, error) {
 		userData.WriteString(fmt.Sprintf(` -ContainerRuntime '%s'`, *w.KubeletConfig.ContainerRuntime))
 	}
 	userData.WriteString("\n</powershell>")
-	return base64.StdEncoding.EncodeToString(userData.Bytes()), nil
+	return userData.String()
+}
+
+func (w Windows) mergeCustomUserData(userDatas ...string) string {
+	var buf bytes.Buffer
+	for _, userData := range userDatas {
+		buf.Write([]byte(w.formatUserData(userData)))
+	}
+	return buf.String()
+}
+
+// format returns userData in a powershell format
+// if the userData passed in is already in a powershell format, then the input is returned without modification
+func (w Windows) formatUserData(customUserData string) string {
+	if strings.HasPrefix(strings.TrimSpace(customUserData), "<powershell>") {
+		return customUserData
+	}
+	var buf bytes.Buffer
+	buf.WriteString("<powershell>\n")
+	buf.WriteString(customUserData)
+	buf.WriteString("\n</powershell>\n")
+	return buf.String()
 }
