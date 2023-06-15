@@ -1,0 +1,14 @@
+name: TestMaintainerCheck
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        type: string
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./github/actions/maintainer-check
+        with:
+          username: ${{ inputs.username }}
