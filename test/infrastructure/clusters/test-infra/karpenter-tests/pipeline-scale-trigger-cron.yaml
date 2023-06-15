@@ -4,7 +4,6 @@ metadata:
   name: pipelines-scale-trigger
   namespace: karpenter-tests
 spec:
-  concurrencyPolicy: Forbid
   failedJobsHistoryLimit: 1
   jobTemplate:
     spec:
