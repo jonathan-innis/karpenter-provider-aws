@@ -40,7 +40,6 @@ import (
 
 var (
 	CleanableObjects = []functional.Pair[client.Object, client.ObjectList]{
-		{First: &v1.Pod{}, Second: &v1.PodList{}},
 		{First: &appsv1.Deployment{}, Second: &appsv1.DeploymentList{}},
 		{First: &appsv1.DaemonSet{}, Second: &appsv1.DaemonSetList{}},
 		{First: &policyv1.PodDisruptionBudget{}, Second: &policyv1.PodDisruptionBudgetList{}},
@@ -51,13 +50,15 @@ var (
 		{First: &v1.LimitRange{}, Second: &v1.LimitRangeList{}},
 		{First: &schedulingv1.PriorityClass{}, Second: &schedulingv1.PriorityClassList{}},
 	}
-	// Delete objects with Karpenter finalizers separately. Executing delete calls on all of these objects at once
+	// FinalizableObjects includes Delete objects with high cardinality that are deleted. Executing delete calls on all of these objects at once
 	// may be grouped as DeleteCollection requests, which have a lower timeout than individual delete calls (before k8s 1.27).
 	// Separating them out diminishes the chance of running into timeouts when doing cleanup for tests of high scale.
 	// https://github.com/kubernetes/kubernetes/pull/115341
-	FinalizableObjects = []functional.Pair[client.Object, client.ObjectList]{
+	// https://github.com/kubernetes/kubernetes/pull/117971 is tracking pagination of this DELETE call
+	HighCardinalityObjects = []functional.Pair[client.Object, client.ObjectList]{
 		{First: &v1.Node{}, Second: &v1.NodeList{}},
 		{First: &v1alpha5.Machine{}, Second: &v1alpha5.MachineList{}},
+		{First: &v1.Pod{}, Second: &v1.PodList{}},
 	}
 )
 
