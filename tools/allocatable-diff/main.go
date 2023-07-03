@@ -22,12 +22,17 @@ import (
 	"log"
 	"os"
 	"sort"
+	"sync"
 
+	"github.com/avast/retry-go"
 	"github.com/samber/lo"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -94,6 +99,60 @@ func main() {
 			Provider: raw,
 		},
 	}))
+
+	realNodeAllocatable := sync.Map{}
+
+	nodeTemplate := &v1alpha1.AWSNodeTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "default",
+		},
+		Spec: v1alpha1.AWSNodeTemplateSpec{
+			AWS: v1alpha1.AWS{
+				SecurityGroupSelector: map[string]string{"karpenter.sh/discovery": clusterName},
+				SubnetSelector:        map[string]string{"karpenter.sh/discovery": clusterName},
+			},
+		},
+	}
+	lo.Must0(kubeClient.Create(ctx, nodeTemplate))
+	workqueue.ParallelizeUntil(ctx, 20, len(instanceTypes), func(i int) {
+		machine := &v1alpha5.Machine{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "default-",
+			},
+			Spec: v1alpha5.MachineSpec{
+				Requirements: []v1.NodeSelectorRequirement{
+					{
+						Key:      v1.LabelInstanceTypeStable,
+						Operator: v1.NodeSelectorOpIn,
+						Values:   []string{instanceTypes[i].Name},
+					},
+				},
+				MachineTemplateRef: &v1alpha5.MachineTemplateRef{
+					Name: nodeTemplate.Name,
+				},
+			},
+		}
+		lo.Must0(kubeClient.Create(ctx, machine))
+		// Wait until the corresponding node registers and reports its allocatable
+		node := &v1.Node{}
+		lo.Must0(retry.Do(func() error {
+			m := &v1alpha5.Machine{}
+			if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(machine), m); err != nil {
+				return err
+			}
+			if m.Status.NodeName == "" {
+				return fmt.Errorf("node status hasn't populated")
+			}
+			if err := kubeClient.Get(ctx, types.NamespacedName{Name: m.Status.NodeName}, node); err != nil {
+				return err
+			}
+			if node.Status.Allocatable == nil {
+				return fmt.Errorf("node allocatable details haven't populated yet")
+			}
+			return nil
+		}))
+		realNodeAllocatable.Store(instanceTypes[i].Name, node.Status.Capacity)
+	})
 
 	// Write the header information into the CSV
 	lo.Must0(w.Write([]string{"Instance Type", "Expected Capacity", "", "", "Expected Allocatable", "", "", "Actual Capacity", "", "", "Actual Allocatable", ""}))

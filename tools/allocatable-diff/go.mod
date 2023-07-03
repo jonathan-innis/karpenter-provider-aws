@@ -3,6 +3,7 @@ module github.com/aws/karpenter/tools/allocatable-diff
 go 1.20
 
 require (
+	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/aws/karpenter v0.28.1-0.20230626183537-05e2fc77888c
 	github.com/aws/karpenter-core v0.28.1-0.20230626164842-7909e131de42
 	github.com/samber/lo v1.38.1
