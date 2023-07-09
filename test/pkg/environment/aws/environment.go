@@ -18,12 +18,10 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/client"
+	awsclient "github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/cloudwatch"
-	"github.com/aws/aws-sdk-go/service/cloudwatch/cloudwatchiface"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/eks"
 	"github.com/aws/aws-sdk-go/service/fis"
@@ -31,10 +29,11 @@ import (
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/aws/aws-sdk-go/service/ssm"
 	"github.com/aws/aws-sdk-go/service/sts"
-	"github.com/samber/lo"
-	"k8s.io/utils/env"
-
+	"github.com/aws/aws-sdk-go/service/timestreamwrite"
+	"github.com/aws/aws-sdk-go/service/timestreamwrite/timestreamwriteiface"
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,stylecheck
+	"github.com/samber/lo"
+	envutils "k8s.io/utils/env"
 
 	"github.com/aws/karpenter/pkg/controllers/interruption"
 	"github.com/aws/karpenter/test/pkg/environment/common"
@@ -52,7 +51,7 @@ type Environment struct {
 	IAMAPI        *iam.IAM
 	FISAPI        *fis.FIS
 	EKSAPI        *eks.EKS
-	CloudwatchAPI cloudwatchiface.CloudWatchAPI
+	TimeStreamAPI timestreamwriteiface.TimestreamWriteAPI
 
 	SQSProvider *interruption.SQSProvider
 }
@@ -63,7 +62,7 @@ func NewEnvironment(t *testing.T) *Environment {
 		session.Options{
 			Config: *request.WithRetryer(
 				&aws.Config{STSRegionalEndpoint: endpoints.RegionalSTSEndpoint},
-				client.DefaultRetryer{NumMaxRetries: 10},
+				awsclient.DefaultRetryer{NumMaxRetries: 10},
 			),
 			SharedConfigState: session.SharedConfigEnable,
 		},
@@ -79,15 +78,15 @@ func NewEnvironment(t *testing.T) *Environment {
 		IAMAPI:        iam.New(session),
 		FISAPI:        fis.New(session),
 		EKSAPI:        eks.New(session),
-		CloudwatchAPI: GetCloudWatchAPI(session),
 		SQSProvider:   interruption.NewSQSProvider(sqs.New(session)),
+		TimeStreamAPI: GetTimeStreamAPI(session),
 	}
 }
 
-func GetCloudWatchAPI(session *session.Session) cloudwatchiface.CloudWatchAPI {
-	if lo.Must(env.GetBool("ENABLE_CLOUDWATCH", false)) {
-		By("enabling cloudwatch metrics firing for this suite")
-		return cloudwatch.New(session)
+func GetTimeStreamAPI(session *session.Session) timestreamwriteiface.TimestreamWriteAPI {
+	if lo.Must(envutils.GetBool("ENABLE_METRICS", false)) {
+		By("enabling metrics firing for this suite")
+		return timestreamwrite.New(session)
 	}
-	return &NoOpCloudwatchAPI{}
+	return &NoOpTimeStreamAPI{}
 }
