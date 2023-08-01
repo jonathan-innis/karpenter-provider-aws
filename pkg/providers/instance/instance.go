@@ -82,7 +82,7 @@ func NewProvider(ctx context.Context, region string, ec2api ec2iface.EC2API, una
 }
 
 func (p *Provider) Create(ctx context.Context, nodeTemplate *v1alpha1.AWSNodeTemplate, machine *v1alpha5.Machine, instanceTypes []*cloudprovider.InstanceType) (*Instance, error) {
-	instanceTypes = p.filterInstanceTypes(machine, instanceTypes)
+	instanceTypes = p.filterInstanceTypes(ctx, machine, instanceTypes)
 	instanceTypes = orderInstanceTypesByPrice(instanceTypes, scheduling.NewNodeSelectorRequirements(machine.Spec.Requirements...))
 	if len(instanceTypes) > MaxInstanceTypes {
 		instanceTypes = instanceTypes[0:MaxInstanceTypes]
@@ -395,12 +395,13 @@ func orderInstanceTypesByPrice(instanceTypes []*cloudprovider.InstanceType, requ
 
 // filterInstanceTypes is used to provide filtering on the list of potential instance types to further limit it to those
 // that make the most sense given our specific AWS cloudprovider.
-func (p *Provider) filterInstanceTypes(machine *v1alpha5.Machine, instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
-	instanceTypes = filterExoticInstanceTypes(instanceTypes)
+func (p *Provider) filterInstanceTypes(ctx context.Context, machine *v1alpha5.Machine, instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
+	instanceTypes = filterExoticInstanceTypes(ctx, instanceTypes)
+
 	// If we could potentially launch either a spot or on-demand node, we want to filter out the spot instance types that
 	// are more expensive than the cheapest on-demand type.
 	if p.isMixedCapacityLaunch(machine, instanceTypes) {
-		instanceTypes = filterUnwantedSpot(instanceTypes)
+		instanceTypes = filterUnwantedSpot(ctx, instanceTypes)
 	}
 	return instanceTypes
 }
@@ -434,7 +435,7 @@ func (p *Provider) isMixedCapacityLaunch(machine *v1alpha5.Machine, instanceType
 
 // filterUnwantedSpot is used to filter out spot types that are more expensive than the cheapest on-demand type that we
 // could launch during mixed capacity-type launches
-func filterUnwantedSpot(instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
+func filterUnwantedSpot(ctx context.Context, instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
 	cheapestOnDemand := math.MaxFloat64
 	// first, find the price of our cheapest available on-demand instance type that could support this node
 	for _, it := range instanceTypes {
@@ -448,40 +449,47 @@ func filterUnwantedSpot(instanceTypes []*cloudprovider.InstanceType) []*cloudpro
 	// Filter out any types where the cheapest offering, which should be spot, is more expensive than the cheapest
 	// on-demand instance type that would have worked. This prevents us from getting a larger more-expensive spot
 	// instance type compared to the cheapest sufficiently large on-demand instance type
-	instanceTypes = lo.Filter(instanceTypes, func(item *cloudprovider.InstanceType, index int) bool {
-		available := item.Offerings.Available()
-		if len(available) == 0 {
-			return false
+	var remaining, filtered cloudprovider.InstanceTypes
+	for _, it := range instanceTypes {
+		available := it.Offerings.Available()
+		if len(available) == 0 || available.Cheapest().Price > cheapestOnDemand {
+			filtered = append(filtered, it)
+			continue
 		}
-		return available.Cheapest().Price <= cheapestOnDemand
-	})
-	return instanceTypes
+		remaining = append(remaining, it)
+	}
+	if len(filtered) > 0 {
+		logging.FromContext(ctx).With("types", filtered.String(), "remaining", len(remaining)).Debug("filtered out spot instance type(s) more expensive than the cheapest on-demand instance type(s)")
+	}
+	return remaining
 }
 
 // filterExoticInstanceTypes is used to eliminate less desirable instance types (like GPUs) from the list of possible instance types when
 // a set of more appropriate instance types would work. If a set of more desirable instance types is not found, then the original slice
 // of instance types are returned.
-func filterExoticInstanceTypes(instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
-	var genericInstanceTypes []*cloudprovider.InstanceType
+func filterExoticInstanceTypes(ctx context.Context, instanceTypes []*cloudprovider.InstanceType) []*cloudprovider.InstanceType {
+	var remaining, filtered cloudprovider.InstanceTypes
 	for _, it := range instanceTypes {
 		// deprioritize metal even if our opinionated filter isn't applied due to something like an instance family
 		// requirement
 		if it.Requirements.Get(v1alpha1.LabelInstanceSize).Has("metal") {
+			filtered = append(filtered, it)
 			continue
 		}
 		if !resources.IsZero(it.Capacity[v1alpha1.ResourceAWSNeuron]) ||
 			!resources.IsZero(it.Capacity[v1alpha1.ResourceAMDGPU]) ||
 			!resources.IsZero(it.Capacity[v1alpha1.ResourceNVIDIAGPU]) ||
 			!resources.IsZero(it.Capacity[v1alpha1.ResourceHabanaGaudi]) {
+			filtered = append(filtered, it)
 			continue
 		}
-		genericInstanceTypes = append(genericInstanceTypes, it)
+		remaining = append(remaining, it)
 	}
 	// if we got some subset of instance types, then prefer to use those
-	if len(genericInstanceTypes) != 0 {
-		return genericInstanceTypes
+	if len(filtered) > 0 {
+		logging.FromContext(ctx).With("types", filtered.String(), "remaining", len(remaining)).Debug("filtered out exotic instance type(s)")
 	}
-	return instanceTypes
+	return lo.Ternary(len(remaining) > 0, remaining, filtered)
 }
 
 func instancesFromOutput(out *ec2.DescribeInstancesOutput) ([]*Instance, error) {
