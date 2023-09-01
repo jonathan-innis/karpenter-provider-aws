@@ -11,6 +11,5 @@ jobs:
       suite: Scale
       event_name: ${{ github.event_name }}
       region: "us-west-2"
-      enable_metrics: true
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
