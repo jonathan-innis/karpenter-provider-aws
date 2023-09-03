@@ -216,6 +216,7 @@ func (p *Provider) launchInstance(ctx context.Context, nodeClass *v1beta1.NodeCl
 		TagSpecifications: []*ec2.TagSpecification{
 			{ResourceType: aws.String(ec2.ResourceTypeInstance), Tags: utils.MergeTags(tags)},
 			{ResourceType: aws.String(ec2.ResourceTypeVolume), Tags: utils.MergeTags(tags)},
+			{ResourceType: aws.String(ec2.ResourceTypeSpotInstancesRequest), Tags: utils.MergeTags(tags)},
 			{ResourceType: aws.String(ec2.ResourceTypeFleet), Tags: utils.MergeTags(tags)},
 		},
 	}
