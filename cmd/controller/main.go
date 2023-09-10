@@ -64,6 +64,7 @@ func main() {
 			awsCloudProvider,
 			op.SubnetProvider,
 			op.SecurityGroupProvider,
+			op.InstanceProvider,
 			op.PricingProvider,
 			op.AMIProvider,
 		)...).
