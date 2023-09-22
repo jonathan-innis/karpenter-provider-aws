@@ -16,7 +16,9 @@ package main
 
 import (
 	"github.com/samber/lo"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	corev1beta1 "github.com/aws/karpenter-core/pkg/apis/v1beta1"
 	"github.com/aws/karpenter/pkg/cloudprovider"
 	"github.com/aws/karpenter/pkg/controllers"
 	"github.com/aws/karpenter/pkg/operator"
@@ -40,6 +42,13 @@ func main() {
 		op.SecurityGroupProvider,
 		op.SubnetProvider,
 	)
+	lo.Must0(op.Manager.GetFieldIndexer().IndexField(ctx, &corev1beta1.NodeClaim{}, "spec.nodeClass.name", func(o client.Object) []string {
+		nc := o.(*corev1beta1.NodeClaim)
+		if nc.Spec.NodeClass == nil {
+			return []string{""}
+		}
+		return []string{nc.Spec.NodeClass.Name}
+	}), "failed to setup nodeclaim nodeclass name indexer")
 	lo.Must0(op.AddHealthzCheck("cloud-provider", awsCloudProvider.LivenessProbe))
 	cloudProvider := metrics.Decorate(awsCloudProvider)
 
@@ -65,6 +74,7 @@ func main() {
 			op.SubnetProvider,
 			op.SecurityGroupProvider,
 			op.InstanceProvider,
+			op.InstanceProfileProvider,
 			op.PricingProvider,
 			op.AMIProvider,
 		)...).
