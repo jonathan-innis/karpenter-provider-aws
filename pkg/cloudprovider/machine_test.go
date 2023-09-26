@@ -106,6 +106,35 @@ var _ = Describe("Machine/CloudProvider", func() {
 		_, ok := cloudProviderMachine.ObjectMeta.Annotations[v1alpha1.AnnotationNodeTemplateHash]
 		Expect(ok).To(BeTrue())
 	})
+	Context("List", func() {
+		It("should not return machines without karpener.sh/provisioner-name tag", func() {
+			id := fake.InstanceID()
+			awsEnv.EC2API.Instances.Store(id, &ec2.Instance{
+				InstanceId: aws.String(id),
+			})
+			nodeClaims, err := cloudProvider.List(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(nodeClaims).To(HaveLen(0))
+		})
+		It("should return a machine with karpenter.sh/provisioner-name tag", func() {
+			id := fake.InstanceID()
+			awsEnv.EC2API.Instances.Store(id, &ec2.Instance{
+				InstanceId: aws.String(id),
+				Tags:
+			})
+			nodeClaims, err := cloudProvider.List(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(nodeClaims).To(HaveLen(0))
+		})
+	})
+	Context("Get", func() {
+		It("should return a NodeClaimNotFound error when instance doesn't exist", func() {
+
+		})
+		It("should return all the Machine information based on tags", func() {
+
+		})
+	})
 	Context("Defaulting", func() {
 		// Intent here is that if updates occur on the provisioningController, the Provisioner doesn't need to be recreated
 		It("should not set the InstanceProfile with the default if none provided in Provisioner", func() {
