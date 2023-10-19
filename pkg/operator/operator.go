@@ -58,7 +58,6 @@ import (
 	"github.com/aws/karpenter/pkg/providers/securitygroup"
 	"github.com/aws/karpenter/pkg/providers/subnet"
 	"github.com/aws/karpenter/pkg/providers/version"
-	"github.com/aws/karpenter/pkg/utils/project"
 )
 
 // Operator is injected into the AWS CloudProvider's factories
@@ -89,7 +88,6 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		config.Credentials = stscreds.NewCredentials(session.Must(session.NewSession()), assumeRoleARN,
 			func(provider *stscreds.AssumeRoleProvider) { setDurationAndExpiry(ctx, provider) })
 	}
-
 	sess := withUserAgent(session.Must(session.NewSession(
 		request.WithRetryer(
 			config,
@@ -187,7 +185,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 
 // withUserAgent adds a karpenter specific user-agent string to AWS session
 func withUserAgent(sess *session.Session) *session.Session {
-	userAgent := fmt.Sprintf("karpenter.sh-%s", project.Version)
+	userAgent := fmt.Sprintf("karpenter.sh-%s", operator.Version)
 	sess.Handlers.Build.PushBack(request.MakeAddToUserAgentFreeFormHandler(userAgent))
 	return sess
 }

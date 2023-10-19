@@ -3,9 +3,9 @@ CLUSTER_NAME ?= $(shell kubectl config view --minify -o jsonpath='{.clusters[].n
 
 ## Inject the app version into project.Version
 ifdef SNAPSHOT_TAG
-LDFLAGS ?= -ldflags=-X=github.com/aws/karpenter/pkg/utils/project.Version=$(SNAPSHOT_TAG)
+LDFLAGS ?= -ldflags=-X=github.com/aws/karpenter-core/pkg/operator.Version=$(SNAPSHOT_TAG)
 else
-LDFLAGS ?= -ldflags=-X=github.com/aws/karpenter/pkg/utils/project.Version=$(shell git describe --tags --always)
+LDFLAGS ?= -ldflags=-X=github.com/aws/karpenter-core/pkg/operator.Version=$(shell git describe --tags --always)
 endif
 
 GOFLAGS ?= $(LDFLAGS)
