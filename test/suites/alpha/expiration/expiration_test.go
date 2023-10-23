@@ -238,14 +238,11 @@ var _ = Describe("Expiration", func() {
 			}).Should(Succeed())
 
 			// Expect nodes To get cordoned
-			cordonedNodes := env.EventuallyExpectCordonedNodeCount("==", 1)
+			cordonedNodes := env.EventuallyExpectCordonedNodeCountLegacy("==", 1)
 
 			// Expire should fail and the original node should be uncordoned
 			// TODO: reduce timeouts when deprovisioning waits are factored out
-			Eventually(func(g Gomega) {
-				g.Expect(env.Client.Get(env, client.ObjectKeyFromObject(cordonedNodes[0]), cordonedNodes[0])).To(Succeed())
-				g.Expect(cordonedNodes[0].Spec.Unschedulable).To(BeFalse())
-			}).WithTimeout(11 * time.Minute).Should(Succeed())
+			env.EventuallyExpectNodesUncordonedLegacyWithTimeout(11*time.Minute, cordonedNodes...)
 
 			// The machine that never registers will be removed
 			Eventually(func(g Gomega) {
@@ -306,14 +303,11 @@ var _ = Describe("Expiration", func() {
 			}).Should(Succeed())
 
 			// Expect nodes To be cordoned
-			cordonedNodes := env.EventuallyExpectCordonedNodeCount("==", 1)
+			cordonedNodes := env.EventuallyExpectCordonedNodeCountLegacy("==", 1)
 
 			// Expire should fail and original node should be uncordoned and no machines should be removed
 			// TODO: reduce timeouts when deprovisioning waits are factored out
-			Eventually(func(g Gomega) {
-				g.Expect(env.Client.Get(env, client.ObjectKeyFromObject(cordonedNodes[0]), cordonedNodes[0]))
-				g.Expect(cordonedNodes[0].Spec.Unschedulable).To(BeFalse())
-			}).WithTimeout(15 * time.Minute).Should(Succeed())
+			env.EventuallyExpectNodesUncordonedLegacyWithTimeout(11*time.Minute, cordonedNodes...)
 
 			// Expect that the new machine/node is kept around after the un-cordon
 			nodeList := &v1.NodeList{}
