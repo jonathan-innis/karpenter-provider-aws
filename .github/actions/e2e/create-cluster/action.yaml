@@ -169,6 +169,29 @@ runs:
             --security-group-ids ${SECURITY_GROUP_IDS[@]} \
             --tags "testing/type=e2e" "testing/cluster=${{ inputs.cluster_name }}" "github.com/run-url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" "karpenter.sh/discovery=${{ inputs.cluster_name }}"
         done
+      
+        # Deploy a NAT Gateway to the VPC so that we can run operations to install certain binaries on our bastion host
+        aws cloudformation deploy \
+          --stack-name private-cluster-nat-${{ inputs.cluster_name }} \
+          --template-file ./.github/actions/e2e/create-cluster/private_cluster_nat_cloudformation.yaml \
+          --parameter-overrides "VPCID=${VPC_ID}" \
+              "ClusterName=${{ inputs.cluster_name }}" \
+              "GithubRunURL=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        NAT_GATEWAY_ID=$(aws cloudformation describe-stacks \
+          --stack-name test  \
+          --query 'Stacks[0].Outputs[?OutputKey==`NatGatewayID`].OutputValue' \
+          --output text)
+        for ID in $SUBNET_IDS; do
+          ROUTE_TABLE_ID=$(aws ec2 describe-route-tables \
+            --filters "Name=association.subnet-id,Values=$ID" \
+            --query "RouteTables[0].RouteTableId" --output text)
+          aws ec2 create-route \
+            --route-table-id "$ROUTE_TABLE_ID" \
+            --destination-cidr-block "0.0.0.0/0" \
+            --nat-gateway-id "$NAT_GATEWAY_ID"
+        done
+      
+        
       fi
   - name: tag oidc provider of the cluster
     if: always()

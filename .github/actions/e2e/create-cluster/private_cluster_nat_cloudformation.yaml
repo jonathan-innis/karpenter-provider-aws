@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Resources needed to create a NAT Gateway in the private subnets to pull Helm and EKSCTL
+Transform: 'AWS::LanguageExtensions'
+Parameters:
+  VPCID:
+    Type: String
+    Description: "VPC to deploy the NAT Gateway into"
+  ClusterName:
+    Type: String
+    Description: "Name of the cluster associated with this VPC"
+  GithubRunURL:
+    Type: String
+    Description: "URL that points to the job that initiated this cloudformation stack creation"
+Resources:
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Sub "${VPCID}"
+      CidrBlock: 192.168.64.0/19
+      Tags:
+        - Key: testing/type
+          Value: e2e
+        - Key: testing/cluster
+          Value: !Sub "${ClusterName}"
+        - Key: github.com/run-url
+          Value: !Sub "${GithubRunURL}"
+        - Key: karpenter.sh/discovery
+          Value: !Sub "${ClusterName}"
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: testing/type
+          Value: e2e
+        - Key: testing/cluster
+          Value: !Sub "${ClusterName}"
+        - Key: github.com/run-url
+          Value: !Sub "${GithubRunURL}"
+        - Key: karpenter.sh/discovery
+          Value: !Sub "${ClusterName}"
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Sub "${VPCID}"
+      InternetGatewayId: !Ref InternetGateway
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Sub "${VPCID}"
+      Tags:
+        - Key: testing/type
+          Value: e2e
+        - Key: testing/cluster
+          Value: !Sub "${ClusterName}"
+        - Key: github.com/run-url
+          Value: !Sub "${GithubRunURL}"
+        - Key: karpenter.sh/discovery
+          Value: !Sub "${ClusterName}"
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+  NatPublicIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: testing/type
+          Value: e2e
+        - Key: testing/cluster
+          Value: !Sub "${ClusterName}"
+        - Key: github.com/run-url
+          Value: !Sub "${GithubRunURL}"
+        - Key: karpenter.sh/discovery
+          Value: !Sub "${ClusterName}"
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: NatPublicIP
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      AllocationId: !GetAtt NatPublicIP.AllocationId
+      Tags:
+        - Key: testing/type
+          Value: e2e
+        - Key: testing/cluster
+          Value: !Sub "${ClusterName}"
+        - Key: github.com/run-url
+          Value: !Sub "${GithubRunURL}"
+        - Key: karpenter.sh/discovery
+          Value: !Sub "${ClusterName}"
+Outputs:
+  NatGatewayID:
+    Description: "Private NAT Gateway ID"
+    Value: !Ref NatGateway
