@@ -28,6 +28,15 @@ const (
 var (
 	InstanceTypeLabel = "instance_type"
 
+	InstanceTypeCacheSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: metrics.Namespace,
+			Subsystem: cloudProviderSubsystem,
+			Name:      "instance_type_cache_size",
+			Help:      "",
+		},
+	)
+
 	InstanceTypeVCPU = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: metrics.Namespace,
@@ -52,5 +61,5 @@ var (
 )
 
 func init() {
-	crmetrics.Registry.MustRegister(InstanceTypeVCPU, InstanceTypeMemory)
+	crmetrics.Registry.MustRegister(InstanceTypeVCPU, InstanceTypeMemory, InstanceTypeCacheSize)
 }
