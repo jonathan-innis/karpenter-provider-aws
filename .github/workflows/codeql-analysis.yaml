@@ -8,7 +8,6 @@ on:
     - cron: '0 12 * * *'
 jobs:
   analyze:
-    if: github.repository == 'aws/karpenter'
     name: Analyze
     runs-on: ubuntu-latest
     permissions:
@@ -18,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'go' ]
+        language: [ 'go', 'javascript' ]
 
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
