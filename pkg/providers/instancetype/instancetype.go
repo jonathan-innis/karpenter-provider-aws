@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -68,8 +69,18 @@ type Provider struct {
 	instanceTypesSeqNum uint64
 }
 
-func NewProvider(region string, cache *cache.Cache, ec2api ec2iface.EC2API, subnetProvider *subnet.Provider,
+func NewProvider(ctx context.Context, region string, cache *cache.Cache, ec2api ec2iface.EC2API, subnetProvider *subnet.Provider,
 	unavailableOfferingsCache *awscache.UnavailableOfferings, pricingProvider *pricing.Provider) *Provider {
+	go func() {
+		for {
+			select {
+			case <-time.After(time.Second * 5):
+				InstanceTypeCacheSize.Set(float64(cache.ItemCount()))
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 	return &Provider{
 		ec2api:               ec2api,
 		region:               region,

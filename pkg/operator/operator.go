@@ -150,6 +150,7 @@ func NewOperator(ctx context.Context, operator *operator.Operator) (context.Cont
 		clusterEndpoint,
 	)
 	instanceTypeProvider := instancetype.NewProvider(
+		ctx,
 		*sess.Config.Region,
 		cache.New(awscache.InstanceTypesAndZonesTTL, awscache.DefaultCleanupInterval),
 		ec2api,
