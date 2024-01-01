@@ -4,8 +4,12 @@ on:
     # The test will run every Monday, Thursday at 12:07 AM UTC
     - cron: '7 0 * * 1,4'
   workflow_run:
-    workflows: [ApprovalComment]
-    types: [completed]
+    workflows:
+      - ApprovalComment
+    types:
+      - completed
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       region:

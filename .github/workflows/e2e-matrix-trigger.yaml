@@ -11,6 +11,8 @@ on:
       - ApprovalComment
     types:
       - completed
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       region:

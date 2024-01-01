@@ -5,6 +5,8 @@ on:
       - ApprovalComment
     types:
       - completed
+    branches:
+      - main
 jobs:
   release:
     permissions:
