@@ -1,11 +1,8 @@
 name: ApprovalComment
 on:
-  issue_comment:
-    types:
-      - created
+  pull_request
 jobs:
   approval-comment:
-    if: github.event.issue.pull_request
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
