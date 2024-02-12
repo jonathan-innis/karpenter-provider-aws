@@ -300,7 +300,7 @@ type BlockDevice struct {
 }
 
 // InstanceStorePolicy enumerates options for configuring instance store disks.
-// +kubebuilder:validation:Enum={RAID0}
+// +kubebuilder:validation:Enum={RAID0,Mount}
 type InstanceStorePolicy string
 
 const (
@@ -309,6 +309,7 @@ const (
 	// ephemeral storage for more and faster node ephemeral-storage. The node's ephemeral storage can be shared among
 	// pods that request ephemeral storage and container images that are downloaded to the node.
 	InstanceStorePolicyRAID0 InstanceStorePolicy = "RAID0"
+	InstanceStorePolicyMount InstanceStorePolicy = "Mount"
 )
 
 // EC2NodeClass is the Schema for the EC2NodeClass API

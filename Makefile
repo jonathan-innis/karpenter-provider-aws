@@ -19,6 +19,7 @@ HELM_OPTS ?= --set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${K
 			--set controller.resources.limits.cpu=1 \
 			--set controller.resources.limits.memory=1Gi \
 			--set settings.featureGates.spotToSpotConsolidation=true \
+			--set logLevel=debug \
 			--create-namespace
 
 # CR for local builds of Karpenter
@@ -138,7 +139,6 @@ image: ## Build the Karpenter controller images using ko build
 apply: image ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
 	helm upgrade --install karpenter charts/karpenter --namespace ${KARPENTER_NAMESPACE} \
         $(HELM_OPTS) \
-        --set logLevel=debug \
         --set controller.image.repository=$(IMG_REPOSITORY) \
         --set controller.image.tag=$(IMG_TAG) \
         --set controller.image.digest=$(IMG_DIGEST)
