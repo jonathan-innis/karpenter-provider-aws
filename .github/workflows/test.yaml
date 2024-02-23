@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+    branches:
+      - 'main'
+      - 'release-v*'
+  pull_request:
+  workflow_dispatch:
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: ${{ github.event.pull_request.number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `Snapshot successfully published to \`oci://1234567.dkr.ecr.${process.env.SNAPSHOT_REGION}.amazonaws.com/karpenter/snapshot/karpenter:0-12345\`.
+            To install you must login to the ECR repo with an AWS account:
+            ~~~
+            aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 1234567.dkr.ecr.us-west-2.amazonaws.com
+            
+            helm upgrade --install karpenter oci://1234567.dkr.ecr.us-west-2.amazonaws.com/karpenter/snapshot --version "0-1234567" --namespace "kube-system" --create-namespace \\
+              --set "settings.clusterName=\${CLUSTER_NAME}" \\
+              --set "settings.interruptionQueue=\${CLUSTER_NAME}" \\
+              --set controller.resources.requests.cpu=1 \\
+              --set controller.resources.requests.memory=1Gi \\
+              --set controller.resources.limits.cpu=1 \\
+              --set controller.resources.limits.memory=1Gi \\
+              --wait
+            ~~~
+            `
+            })
