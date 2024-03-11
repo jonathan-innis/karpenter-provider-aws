@@ -165,7 +165,7 @@ var _ = Describe("Drift", func() {
 
 			// Remove the finalizer from each node so that we can terminate
 			for _, node := range nodes {
-				Expect(env.ExpectTestingFinalizerRemoved(node)).To(Succeed())
+				env.ExpectTestingFinalizerRemoved(node)
 			}
 
 			// After the deletion timestamp is set and all pods are drained
@@ -173,7 +173,7 @@ var _ = Describe("Drift", func() {
 			env.EventuallyExpectNotFound(nodes[0], nodes[1])
 
 			nodes = env.EventuallyExpectTaintedNodeCount("==", 1)
-			Expect(env.ExpectTestingFinalizerRemoved(nodes[0])).To(Succeed())
+			env.ExpectTestingFinalizerRemoved(nodes[0])
 			env.EventuallyExpectNotFound(nodes[0])
 		})
 		It("should respect budgets for non-empty delete drift", func() {
@@ -253,8 +253,8 @@ var _ = Describe("Drift", func() {
 			nodes = env.ConsistentlyExpectDisruptionsWithNodeCount(2, 3, 30*time.Second)
 
 			By("removing the finalizer from the nodes")
-			Expect(env.ExpectTestingFinalizerRemoved(nodes[0])).To(Succeed())
-			Expect(env.ExpectTestingFinalizerRemoved(nodes[1])).To(Succeed())
+			env.ExpectTestingFinalizerRemoved(nodes[0])
+			env.ExpectTestingFinalizerRemoved(nodes[1])
 
 			// After the deletion timestamp is set and all pods are drained
 			// the node should be gone
@@ -335,7 +335,7 @@ var _ = Describe("Drift", func() {
 			env.ConsistentlyExpectDisruptionsWithNodeCount(3, 8, 5*time.Second)
 
 			for _, node := range originalNodes {
-				Expect(env.ExpectTestingFinalizerRemoved(node)).To(Succeed())
+				env.ExpectTestingFinalizerRemoved(node)
 			}
 
 			// Eventually expect all the nodes to be rolled and completely removed

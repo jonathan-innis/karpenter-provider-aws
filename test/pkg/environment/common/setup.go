@@ -125,7 +125,7 @@ func (env *Environment) CleanupObjects(cleanableObjects ...client.Object) {
 				// are deleting so that we avoid getting client-side throttled
 				workqueue.ParallelizeUntil(env, 50, len(metaList.Items), func(i int) {
 					defer GinkgoRecover()
-					g.Expect(env.ExpectTestingFinalizerRemoved(&metaList.Items[i])).To(Succeed())
+					g.Expect(env.RemoveTestingFinalizer(&metaList.Items[i])).To(Succeed())
 					g.Expect(client.IgnoreNotFound(env.Client.Delete(env, &metaList.Items[i],
 						client.PropagationPolicy(metav1.DeletePropagationForeground),
 						&client.DeleteOptions{GracePeriodSeconds: lo.ToPtr(int64(0))}))).To(Succeed())
@@ -139,7 +139,14 @@ func (env *Environment) CleanupObjects(cleanableObjects ...client.Object) {
 	wg.Wait()
 }
 
-func (env *Environment) ExpectTestingFinalizerRemoved(obj client.Object) error {
+func (env *Environment) ExpectTestingFinalizerRemoved(obj client.Object) {
+	GinkgoHelper()
+	Eventually(func(g Gomega) {
+		g.Expect(env.RemoveTestingFinalizer(obj))
+	}).WithTimeout(time.Second * 5).Should(Succeed())
+}
+
+func (env *Environment) RemoveTestingFinalizer(obj client.Object) error {
 	metaObj := &metav1.PartialObjectMetadata{}
 	metaObj.SetGroupVersionKind(lo.Must(apiutil.GVKForObject(obj, env.Client.Scheme())))
 	if err := env.Client.Get(env, client.ObjectKeyFromObject(obj), metaObj); err != nil {
@@ -152,7 +159,7 @@ func (env *Environment) ExpectTestingFinalizerRemoved(obj client.Object) error {
 	})
 
 	if !equality.Semantic.DeepEqual(metaObj, deepCopy) {
-		return client.IgnoreNotFound(env.Client.Patch(env, metaObj, client.MergeFrom(deepCopy)))
+		return client.IgnoreNotFound(env.Client.Patch(env, metaObj, client.StrategicMergeFrom(deepCopy)))
 	}
 	return nil
 }

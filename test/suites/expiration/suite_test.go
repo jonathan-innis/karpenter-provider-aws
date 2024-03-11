@@ -243,7 +243,7 @@ var _ = Describe("Expiration", func() {
 
 			// Remove finalizers
 			for _, node := range nodes {
-				Expect(env.ExpectTestingFinalizerRemoved(node)).To(Succeed())
+				env.ExpectTestingFinalizerRemoved(node)
 			}
 
 			// After the deletion timestamp is set and all pods are drained
@@ -254,7 +254,7 @@ var _ = Describe("Expiration", func() {
 			nodes = env.EventuallyExpectTaintedNodeCount("==", 1)
 
 			// Expect the finalizers to be removed and deleted.
-			Expect(env.ExpectTestingFinalizerRemoved(nodes[0])).To(Succeed())
+			env.ExpectTestingFinalizerRemoved(nodes[0])
 			env.EventuallyExpectNotFound(nodes[0])
 		})
 		It("should respect budgets for non-empty delete expiration", func() {
@@ -336,9 +336,8 @@ var _ = Describe("Expiration", func() {
 			nodes = env.ConsistentlyExpectDisruptionsWithNodeCount(2, 3, 5*time.Second)
 
 			By("removing the finalizer from the nodes")
-			Expect(env.ExpectTestingFinalizerRemoved(nodes[0])).To(Succeed())
-			Expect(env.ExpectTestingFinalizerRemoved(nodes[1])).To(Succeed())
-
+			env.ExpectTestingFinalizerRemoved(nodes[0])
+			env.ExpectTestingFinalizerRemoved(nodes[1])
 			// After the deletion timestamp is set and all pods are drained
 			// the node should be gone
 			env.EventuallyExpectNotFound(nodes[0], nodes[1])
@@ -424,7 +423,7 @@ var _ = Describe("Expiration", func() {
 			env.ExpectUpdated(nodePool)
 
 			for _, node := range nodes {
-				Expect(env.ExpectTestingFinalizerRemoved(node)).To(Succeed())
+				env.ExpectTestingFinalizerRemoved(node)
 			}
 
 			env.EventuallyExpectNotFound(nodes[0], nodes[1], nodes[2])

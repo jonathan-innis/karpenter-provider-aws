@@ -130,7 +130,7 @@ var _ = Describe("Consolidation", func() {
 
 			// Remove the finalizer from each node so that we can terminate
 			for _, node := range nodes {
-				Expect(env.ExpectTestingFinalizerRemoved(node)).To(Succeed())
+				env.ExpectTestingFinalizerRemoved(node)
 			}
 
 			// After the deletion timestamp is set and all pods are drained
@@ -142,7 +142,7 @@ var _ = Describe("Consolidation", func() {
 			nodes = env.ConsistentlyExpectDisruptionsWithNodeCount(2, 3, 5*time.Second)
 
 			for _, node := range nodes {
-				Expect(env.ExpectTestingFinalizerRemoved(node)).To(Succeed())
+				env.ExpectTestingFinalizerRemoved(node)
 			}
 			env.EventuallyExpectNotFound(nodes[0], nodes[1])
 
@@ -212,7 +212,7 @@ var _ = Describe("Consolidation", func() {
 			nodes = env.ConsistentlyExpectDisruptionsWithNodeCount(2, 3, 5*time.Second)
 
 			for _, node := range nodes {
-				Expect(env.ExpectTestingFinalizerRemoved(node)).To(Succeed())
+				env.ExpectTestingFinalizerRemoved(node)
 			}
 			env.EventuallyExpectNotFound(nodes[0], nodes[1])
 			env.ExpectNodeCount("==", 1)
@@ -318,7 +318,7 @@ var _ = Describe("Consolidation", func() {
 			env.ConsistentlyExpectDisruptionsWithNodeCount(3, 8, 5*time.Second)
 
 			for _, node := range originalNodes {
-				Expect(env.ExpectTestingFinalizerRemoved(node)).To(Succeed())
+				env.ExpectTestingFinalizerRemoved(node)
 			}
 
 			// Eventually expect all the nodes to be rolled and completely removed
