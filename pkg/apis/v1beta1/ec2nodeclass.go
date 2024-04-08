@@ -15,12 +15,18 @@ limitations under the License.
 package v1beta1
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/mitchellh/hashstructure/v2"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1beta1 "sigs.k8s.io/karpenter/pkg/apis/v1beta1"
+
+	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
 )
 
 // EC2NodeClassSpec is the top level specification for the AWS Karpenter Provider.
@@ -327,6 +333,124 @@ type EC2NodeClass struct {
 	// +kubebuilder:validation:XValidation:message="changing from 'instanceProfile' to 'role' is not supported. You must delete and recreate this node class if you want to change this.",rule="(has(oldSelf.role) && has(self.role)) || (has(oldSelf.instanceProfile) && has(self.instanceProfile))"
 	Spec   EC2NodeClassSpec   `json:"spec,omitempty"`
 	Status EC2NodeClassStatus `json:"status,omitempty"`
+}
+
+func (in *EC2NodeClass) Tags(ctx context.Context) map[string]string {
+	return map[string]string{
+		fmt.Sprintf("kubernetes.io/cluster/%s", options.FromContext(ctx).ClusterName): "owned",
+		corev1beta1.ManagedByAnnotationKey:                                            options.FromContext(ctx).ClusterName,
+		LabelNodeClass:                                                                in.Name,
+	}
+}
+
+func (in *EC2NodeClass) SecurityGroupFilters() (res [][]*ec2.Filter) {
+	idFilter := &ec2.Filter{Name: aws.String("group-id")}
+	nameFilter := &ec2.Filter{Name: aws.String("group-name")}
+	for _, term := range in.Spec.SecurityGroupSelectorTerms {
+		switch {
+		case term.ID != "":
+			idFilter.Values = append(idFilter.Values, aws.String(term.ID))
+		case term.Name != "":
+			nameFilter.Values = append(nameFilter.Values, aws.String(term.Name))
+		default:
+			var filters []*ec2.Filter
+			for k, v := range term.Tags {
+				if v == "*" {
+					filters = append(filters, &ec2.Filter{
+						Name:   aws.String("tag-key"),
+						Values: []*string{aws.String(k)},
+					})
+				} else {
+					filters = append(filters, &ec2.Filter{
+						Name:   aws.String(fmt.Sprintf("tag:%s", k)),
+						Values: []*string{aws.String(v)},
+					})
+				}
+			}
+			res = append(res, filters)
+		}
+	}
+	if len(idFilter.Values) > 0 {
+		res = append(res, []*ec2.Filter{idFilter})
+	}
+	if len(nameFilter.Values) > 0 {
+		res = append(res, []*ec2.Filter{nameFilter})
+	}
+	return res
+}
+
+func (e *EC2NodeClass) SubnetFilters() (res [][]*ec2.Filter) {
+	idFilter := &ec2.Filter{Name: aws.String("subnet-id")}
+	for _, term := range e.Spec.SubnetSelectorTerms {
+		switch {
+		case term.ID != "":
+			idFilter.Values = append(idFilter.Values, aws.String(term.ID))
+		default:
+			var filters []*ec2.Filter
+			for k, v := range term.Tags {
+				if v == "*" {
+					filters = append(filters, &ec2.Filter{
+						Name:   aws.String("tag-key"),
+						Values: []*string{aws.String(k)},
+					})
+				} else {
+					filters = append(filters, &ec2.Filter{
+						Name:   aws.String(fmt.Sprintf("tag:%s", k)),
+						Values: []*string{aws.String(v)},
+					})
+				}
+			}
+			res = append(res, filters)
+		}
+	}
+	if len(idFilter.Values) > 0 {
+		res = append(res, []*ec2.Filter{idFilter})
+	}
+	return res
+}
+
+func (in *EC2NodeClass) AMIFilters() (res []FiltersAndOwners) {
+	idFilter := &ec2.Filter{Name: aws.String("image-id")}
+	for _, term := range in.Spec.AMISelectorTerms {
+		switch {
+		case term.ID != "":
+			idFilter.Values = append(idFilter.Values, aws.String(term.ID))
+		default:
+			elem := FiltersAndOwners{
+				Owners: lo.Ternary(term.Owner != "", []string{term.Owner}, []string{}),
+			}
+			if term.Name != "" {
+				// Default owners to self,amazon to ensure Karpenter only discovers cross-account AMIs if the user specifically allows it.
+				// Removing this default would cause Karpenter to discover publicly shared AMIs passing the name filter.
+				elem = FiltersAndOwners{
+					Owners: lo.Ternary(term.Owner != "", []string{term.Owner}, []string{"self", "amazon"}),
+				}
+				elem.Filters = append(elem.Filters, &ec2.Filter{
+					Name:   aws.String("name"),
+					Values: aws.StringSlice([]string{term.Name}),
+				})
+
+			}
+			for k, v := range term.Tags {
+				if v == "*" {
+					elem.Filters = append(elem.Filters, &ec2.Filter{
+						Name:   aws.String("tag-key"),
+						Values: []*string{aws.String(k)},
+					})
+				} else {
+					elem.Filters = append(elem.Filters, &ec2.Filter{
+						Name:   aws.String(fmt.Sprintf("tag:%s", k)),
+						Values: []*string{aws.String(v)},
+					})
+				}
+			}
+			res = append(res, elem)
+		}
+	}
+	if len(idFilter.Values) > 0 {
+		res = append(res, FiltersAndOwners{Filters: []*ec2.Filter{idFilter}})
+	}
+	return res
 }
 
 // We need to bump the EC2NodeClassHashVersion when we make an update to the EC2NodeClass CRD under these conditions:

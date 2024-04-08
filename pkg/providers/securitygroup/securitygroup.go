@@ -33,7 +33,7 @@ import (
 )
 
 type Provider interface {
-	List(context.Context, *v1beta1.EC2NodeClass) ([]*ec2.SecurityGroup, error)
+	List(context.Context, v1beta1.AWSNodeClass) ([]*ec2.SecurityGroup, error)
 }
 
 type DefaultProvider struct {
@@ -52,12 +52,12 @@ func NewDefaultProvider(ec2api ec2iface.EC2API, cache *cache.Cache) *DefaultProv
 	}
 }
 
-func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1beta1.EC2NodeClass) ([]*ec2.SecurityGroup, error) {
+func (p *DefaultProvider) List(ctx context.Context, nodeClass v1beta1.AWSNodeClass) ([]*ec2.SecurityGroup, error) {
 	p.Lock()
 	defer p.Unlock()
 
 	// Get SecurityGroups
-	filterSets := getFilterSets(nodeClass.Spec.SecurityGroupSelectorTerms)
+	filterSets := nodeClass.SecurityGroupFilters()
 	securityGroups, err := p.getSecurityGroups(ctx, filterSets)
 	if err != nil {
 		return nil, err
@@ -92,40 +92,4 @@ func (p *DefaultProvider) getSecurityGroups(ctx context.Context, filterSets [][]
 	}
 	p.cache.SetDefault(fmt.Sprint(hash), lo.Values(securityGroups))
 	return lo.Values(securityGroups), nil
-}
-
-func getFilterSets(terms []v1beta1.SecurityGroupSelectorTerm) (res [][]*ec2.Filter) {
-	idFilter := &ec2.Filter{Name: aws.String("group-id")}
-	nameFilter := &ec2.Filter{Name: aws.String("group-name")}
-	for _, term := range terms {
-		switch {
-		case term.ID != "":
-			idFilter.Values = append(idFilter.Values, aws.String(term.ID))
-		case term.Name != "":
-			nameFilter.Values = append(nameFilter.Values, aws.String(term.Name))
-		default:
-			var filters []*ec2.Filter
-			for k, v := range term.Tags {
-				if v == "*" {
-					filters = append(filters, &ec2.Filter{
-						Name:   aws.String("tag-key"),
-						Values: []*string{aws.String(k)},
-					})
-				} else {
-					filters = append(filters, &ec2.Filter{
-						Name:   aws.String(fmt.Sprintf("tag:%s", k)),
-						Values: []*string{aws.String(v)},
-					})
-				}
-			}
-			res = append(res, filters)
-		}
-	}
-	if len(idFilter.Values) > 0 {
-		res = append(res, []*ec2.Filter{idFilter})
-	}
-	if len(nameFilter.Values) > 0 {
-		res = append(res, []*ec2.Filter{nameFilter})
-	}
-	return res
 }

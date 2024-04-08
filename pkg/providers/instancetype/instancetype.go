@@ -27,15 +27,15 @@ import (
 
 	corev1beta1 "sigs.k8s.io/karpenter/pkg/apis/v1beta1"
 
-	"github.com/aws/karpenter-provider-aws/pkg/apis/v1beta1"
-	awscache "github.com/aws/karpenter-provider-aws/pkg/cache"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"knative.dev/pkg/logging"
+
+	"github.com/aws/karpenter-provider-aws/pkg/apis/v1beta1"
+	awscache "github.com/aws/karpenter-provider-aws/pkg/cache"
 
 	"github.com/aws/karpenter-provider-aws/pkg/providers/pricing"
 	"github.com/aws/karpenter-provider-aws/pkg/providers/subnet"
@@ -93,7 +93,7 @@ func NewDefaultProvider(region string, cache *cache.Cache, ec2api ec2iface.EC2AP
 	}
 }
 
-func (p *DefaultProvider) List(ctx context.Context, kc *corev1beta1.KubeletConfiguration, nodeClass *v1beta1.EC2NodeClass) ([]*cloudprovider.InstanceType, error) {
+func (p *DefaultProvider) List(ctx context.Context, kc *corev1beta1.KubeletConfiguration, nodeClass v1beta1.AWSNodeClass) ([]*cloudprovider.InstanceType, error) {
 	// Get InstanceTypes from EC2
 	instanceTypes, err := p.GetInstanceTypes(ctx)
 	if err != nil {
@@ -112,17 +112,10 @@ func (p *DefaultProvider) List(ctx context.Context, kc *corev1beta1.KubeletConfi
 		return aws.StringValue(s.AvailabilityZone)
 	})...)
 
-	if kc == nil {
-		kc = &corev1beta1.KubeletConfiguration{}
-	}
-	if nodeClass == nil {
-		nodeClass = &v1beta1.EC2NodeClass{}
-	}
-
 	// Compute fully initialized instance types hash key
 	subnetZonesHash, _ := hashstructure.Hash(subnetZones, hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
 	kcHash, _ := hashstructure.Hash(kc, hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
-	blockDeviceMappingsHash, _ := hashstructure.Hash(nodeClass.Spec.BlockDeviceMappings, hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
+	blockDeviceMappingsHash, _ := hashstructure.Hash(nodeClass.BlockDeviceMappings(), hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
 	key := fmt.Sprintf("%d-%d-%d-%016x-%016x-%016x-%s-%s",
 		p.instanceTypesSeqNum,
 		p.instanceTypeOfferingsSeqNum,
@@ -130,8 +123,8 @@ func (p *DefaultProvider) List(ctx context.Context, kc *corev1beta1.KubeletConfi
 		subnetZonesHash,
 		kcHash,
 		blockDeviceMappingsHash,
-		aws.StringValue((*string)(nodeClass.Spec.InstanceStorePolicy)),
-		aws.StringValue(nodeClass.Spec.AMIFamily),
+		nodeClass.InstanceStorePolicy(),
+		nodeClass.AMIFamily(),
 	)
 	if item, ok := p.cache.Get(key); ok {
 		return item.([]*cloudprovider.InstanceType), nil
@@ -148,7 +141,7 @@ func (p *DefaultProvider) List(ctx context.Context, kc *corev1beta1.KubeletConfi
 	if p.cm.HasChanged("zones", allZones) {
 		logging.FromContext(ctx).With("zones", allZones.UnsortedList()).Debugf("discovered zones")
 	}
-	amiFamily := amifamily.GetAMIFamily(nodeClass.Spec.AMIFamily, &amifamily.Options{})
+	amiFamily := amifamily.GetAMIFamily(lo.ToPtr(nodeClass.AMIFamily()), &amifamily.Options{})
 	result := lo.Map(instanceTypes, func(i *ec2.InstanceTypeInfo, _ int) *cloudprovider.InstanceType {
 		instanceTypeVCPU.With(prometheus.Labels{
 			instanceTypeLabel: *i.InstanceType,
@@ -162,7 +155,7 @@ func (p *DefaultProvider) List(ctx context.Context, kc *corev1beta1.KubeletConfi
 		// so that Karpenter is able to cache the set of InstanceTypes based on values that alter the set of instance types
 		// !!! Important !!!
 		return NewInstanceType(ctx, i, p.region,
-			nodeClass.Spec.BlockDeviceMappings, nodeClass.Spec.InstanceStorePolicy,
+			nodeClass.BlockDeviceMappings(), nodeClass.InstanceStorePolicy(),
 			kc.MaxPods, kc.PodsPerCore, kc.KubeReserved, kc.SystemReserved, kc.EvictionHard, kc.EvictionSoft,
 			amiFamily, p.createOfferings(ctx, i, instanceTypeOfferings[aws.StringValue(i.InstanceType)], allZones, subnetZones))
 	})

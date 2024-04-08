@@ -212,7 +212,7 @@ func memory(ctx context.Context, info *ec2.InstanceTypeInfo) *resource.Quantity 
 // Setting ephemeral-storage to be either the default value, what is defined in blockDeviceMappings, or the combined size of local store volumes.
 func ephemeralStorage(info *ec2.InstanceTypeInfo, amiFamily amifamily.AMIFamily, blockDeviceMappings []*v1beta1.BlockDeviceMapping, instanceStorePolicy *v1beta1.InstanceStorePolicy) *resource.Quantity {
 	// If local store disks have been configured for node ephemeral-storage, use the total size of the disks.
-	if lo.FromPtr(instanceStorePolicy) == v1beta1.InstanceStorePolicyRAID0 {
+	if instanceStorePolicy == lo.ToPtr(v1beta1.InstanceStorePolicyRAID0) {
 		if info.InstanceStorageInfo != nil && info.InstanceStorageInfo.TotalSizeInGB != nil {
 			return resources.Quantity(fmt.Sprintf("%dG", *info.InstanceStorageInfo.TotalSizeInGB))
 		}

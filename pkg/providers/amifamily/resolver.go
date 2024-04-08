@@ -28,11 +28,11 @@ import (
 
 	corev1beta1 "sigs.k8s.io/karpenter/pkg/apis/v1beta1"
 
-	"github.com/aws/karpenter-provider-aws/pkg/apis/v1beta1"
-	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily/bootstrap"
-
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/scheduling"
+
+	"github.com/aws/karpenter-provider-aws/pkg/apis/v1beta1"
+	"github.com/aws/karpenter-provider-aws/pkg/providers/amifamily/bootstrap"
 )
 
 var DefaultEBS = v1beta1.BlockDevice{
@@ -120,8 +120,8 @@ func NewResolver(amiProvider Provider) *Resolver {
 
 // Resolve generates launch templates using the static options and dynamically generates launch template parameters.
 // Multiple ResolvedTemplates are returned based on the instanceTypes passed in to support special AMIs for certain instance types like GPUs.
-func (r Resolver) Resolve(ctx context.Context, nodeClass *v1beta1.EC2NodeClass, nodeClaim *corev1beta1.NodeClaim, instanceTypes []*cloudprovider.InstanceType, capacityType string, options *Options) ([]*LaunchTemplate, error) {
-	amiFamily := GetAMIFamily(nodeClass.Spec.AMIFamily, options)
+func (r Resolver) Resolve(ctx context.Context, nodeClass v1beta1.AWSNodeClass, nodeClaim *corev1beta1.NodeClaim, instanceTypes []*cloudprovider.InstanceType, capacityType string, options *Options) ([]*LaunchTemplate, error) {
+	amiFamily := GetAMIFamily(nodeClass.AMIFamily(), options)
 	amis, err := r.amiProvider.Get(ctx, nodeClass, options)
 	if err != nil {
 		return nil, err
@@ -165,8 +165,8 @@ func (r Resolver) Resolve(ctx context.Context, nodeClass *v1beta1.EC2NodeClass, 
 	return resolvedTemplates, nil
 }
 
-func GetAMIFamily(amiFamily *string, options *Options) AMIFamily {
-	switch aws.StringValue(amiFamily) {
+func GetAMIFamily(amiFamily string, options *Options) AMIFamily {
+	switch amiFamily {
 	case v1beta1.AMIFamilyBottlerocket:
 		return &Bottlerocket{Options: options}
 	case v1beta1.AMIFamilyUbuntu:
@@ -210,7 +210,7 @@ func (r Resolver) defaultClusterDNS(opts *Options, kubeletConfig *corev1beta1.Ku
 	return newKubeletConfig
 }
 
-func (r Resolver) resolveLaunchTemplate(nodeClass *v1beta1.EC2NodeClass, nodeClaim *corev1beta1.NodeClaim, instanceTypes []*cloudprovider.InstanceType, capacityType string,
+func (r Resolver) resolveLaunchTemplate(nodeClass v1beta1.AWSNodeClass, nodeClaim *corev1beta1.NodeClaim, instanceTypes []*cloudprovider.InstanceType, capacityType string,
 	amiFamily AMIFamily, amiID string, maxPods int, efaCount int, options *Options) (*LaunchTemplate, error) {
 	kubeletConfig := &corev1beta1.KubeletConfiguration{}
 	if nodeClaim.Spec.Kubelet != nil {
@@ -229,12 +229,12 @@ func (r Resolver) resolveLaunchTemplate(nodeClass *v1beta1.EC2NodeClass, nodeCla
 			options.Labels,
 			options.CABundle,
 			instanceTypes,
-			nodeClass.Spec.UserData,
+			nodeClass.UserData(),
 			options.InstanceStorePolicy,
 		),
-		BlockDeviceMappings: nodeClass.Spec.BlockDeviceMappings,
-		MetadataOptions:     nodeClass.Spec.MetadataOptions,
-		DetailedMonitoring:  aws.BoolValue(nodeClass.Spec.DetailedMonitoring),
+		BlockDeviceMappings: nodeClass.BlockDeviceMappings(),
+		MetadataOptions:     nodeClass.MetadataOptions(),
+		DetailedMonitoring:  nodeClass.DetailedMonitoring(),
 		AMIID:               amiID,
 		InstanceTypes:       instanceTypes,
 		EFACount:            efaCount,

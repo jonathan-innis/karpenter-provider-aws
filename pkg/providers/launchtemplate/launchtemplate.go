@@ -16,7 +16,6 @@ package launchtemplate
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -59,9 +58,9 @@ const (
 )
 
 type Provider interface {
-	EnsureAll(context.Context, *v1beta1.EC2NodeClass, *corev1beta1.NodeClaim,
+	EnsureAll(context.Context, v1beta1.AWSNodeClass, *corev1beta1.NodeClaim,
 		[]*cloudprovider.InstanceType, string, map[string]string) ([]*LaunchTemplate, error)
-	DeleteAll(context.Context, *v1beta1.EC2NodeClass) error
+	DeleteAll(context.Context, v1beta1.AWSNodeClass) error
 	InvalidateCache(context.Context, string, string)
 	ResolveClusterCIDR(context.Context) error
 }
@@ -117,7 +116,7 @@ func NewProvider(ctx context.Context, cache *cache.Cache, ec2api ec2iface.EC2API
 	return l
 }
 
-func (p *DefaultProvider) EnsureAll(ctx context.Context, nodeClass *v1beta1.EC2NodeClass, nodeClaim *corev1beta1.NodeClaim,
+func (p *DefaultProvider) EnsureAll(ctx context.Context, nodeClass v1beta1.AWSNodeClass, nodeClaim *corev1beta1.NodeClaim,
 	instanceTypes []*cloudprovider.InstanceType, capacityType string, tags map[string]string) ([]*LaunchTemplate, error) {
 
 	p.Lock()
@@ -162,7 +161,7 @@ func launchTemplateName(options *amifamily.LaunchTemplate) string {
 	return fmt.Sprintf(launchTemplateNameFormat, fmt.Sprint(hash))
 }
 
-func (p *DefaultProvider) createAMIOptions(ctx context.Context, nodeClass *v1beta1.EC2NodeClass, labels, tags map[string]string) (*amifamily.Options, error) {
+func (p *DefaultProvider) createAMIOptions(ctx context.Context, nodeClass v1beta1.AWSNodeClass, labels, tags map[string]string) (*amifamily.Options, error) {
 	// Remove any labels passed into userData that are prefixed with "node-restriction.kubernetes.io" or "kops.k8s.io" since the kubelet can't
 	// register the node with any labels from this domain: https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#noderestriction
 	for k := range labels {
@@ -170,10 +169,6 @@ func (p *DefaultProvider) createAMIOptions(ctx context.Context, nodeClass *v1bet
 		if strings.HasSuffix(labelDomain, v1.LabelNamespaceNodeRestriction) || strings.HasSuffix(labelDomain, "kops.k8s.io") {
 			delete(labels, k)
 		}
-	}
-	instanceProfile, err := p.getInstanceProfile(nodeClass)
-	if err != nil {
-		return nil, err
 	}
 	// Get constrained security groups
 	securityGroups, err := p.securityGroupProvider.List(ctx, nodeClass)
@@ -187,8 +182,8 @@ func (p *DefaultProvider) createAMIOptions(ctx context.Context, nodeClass *v1bet
 		ClusterName:         options.FromContext(ctx).ClusterName,
 		ClusterEndpoint:     p.ClusterEndpoint,
 		ClusterCIDR:         p.ClusterCIDR.Load(),
-		InstanceProfile:     instanceProfile,
-		InstanceStorePolicy: nodeClass.Spec.InstanceStorePolicy,
+		InstanceProfile:     nodeClass.InstanceProfile(),
+		InstanceStorePolicy: nodeClass.InstanceStorePolicy(),
 		SecurityGroups: lo.Map(securityGroups, func(s *ec2.SecurityGroup, _ int) v1beta1.SecurityGroup {
 			return v1beta1.SecurityGroup{ID: aws.StringValue(s.GroupId), Name: aws.StringValue(s.GroupName)}
 		}),
@@ -196,10 +191,10 @@ func (p *DefaultProvider) createAMIOptions(ctx context.Context, nodeClass *v1bet
 		Labels:        labels,
 		CABundle:      p.CABundle,
 		KubeDNSIP:     p.KubeDNSIP,
-		NodeClassName: nodeClass.Name,
+		NodeClassName: nodeClass.Name(),
 	}
-	if nodeClass.Spec.AssociatePublicIPAddress != nil {
-		options.AssociatePublicIPAddress = nodeClass.Spec.AssociatePublicIPAddress
+	if nodeClass.AssociatePublicIPAddress() != nil {
+		options.AssociatePublicIPAddress = nodeClass.AssociatePublicIPAddress()
 	} else if ok, err := p.subnetProvider.CheckAnyPublicIPAssociations(ctx, nodeClass); err != nil {
 		return nil, err
 	} else if !ok {
@@ -394,19 +389,6 @@ func (p *DefaultProvider) cachedEvictedFunc(ctx context.Context) func(string, in
 			"name", aws.StringValue(launchTemplate.LaunchTemplateName),
 		).Debugf("deleted launch template")
 	}
-}
-
-func (p *DefaultProvider) getInstanceProfile(nodeClass *v1beta1.EC2NodeClass) (string, error) {
-	if nodeClass.Spec.InstanceProfile != nil {
-		return aws.StringValue(nodeClass.Spec.InstanceProfile), nil
-	}
-	if nodeClass.Spec.Role != "" {
-		if nodeClass.Status.InstanceProfile == "" {
-			return "", cloudprovider.NewNodeClassNotReadyError(fmt.Errorf("instance profile hasn't resolved for role"))
-		}
-		return nodeClass.Status.InstanceProfile, nil
-	}
-	return "", errors.New("neither spec.instanceProfile or spec.role is specified")
 }
 
 func (p *DefaultProvider) DeleteAll(ctx context.Context, nodeClass *v1beta1.EC2NodeClass) error {

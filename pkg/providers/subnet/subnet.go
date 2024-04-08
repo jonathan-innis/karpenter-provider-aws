@@ -29,17 +29,17 @@ import (
 	"github.com/samber/lo"
 	"knative.dev/pkg/logging"
 
-	"github.com/aws/karpenter-provider-aws/pkg/apis/v1beta1"
-
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/utils/pretty"
+
+	"github.com/aws/karpenter-provider-aws/pkg/apis/v1beta1"
 )
 
 type Provider interface {
 	LivenessProbe(*http.Request) error
-	List(context.Context, *v1beta1.EC2NodeClass) ([]*ec2.Subnet, error)
-	CheckAnyPublicIPAssociations(context.Context, *v1beta1.EC2NodeClass) (bool, error)
-	ZonalSubnetsForLaunch(context.Context, *v1beta1.EC2NodeClass, []*cloudprovider.InstanceType, string) (map[string]*ec2.Subnet, error)
+	List(context.Context, v1beta1.AWSNodeClass) ([]*ec2.Subnet, error)
+	CheckAnyPublicIPAssociations(context.Context, v1beta1.AWSNodeClass) (bool, error)
+	ZonalSubnetsForLaunch(context.Context, v1beta1.AWSNodeClass, []*cloudprovider.InstanceType, string) (map[string]*ec2.Subnet, error)
 	UpdateInflightIPs(*ec2.CreateFleetInput, *ec2.CreateFleetOutput, []*cloudprovider.InstanceType, []*ec2.Subnet, string)
 }
 
@@ -63,10 +63,11 @@ func NewDefaultProvider(ec2api ec2iface.EC2API, cache *cache.Cache) *DefaultProv
 	}
 }
 
-func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1beta1.EC2NodeClass) ([]*ec2.Subnet, error) {
+func (p *DefaultProvider) List(ctx context.Context, nodeClass v1beta1.AWSNodeClass) ([]*ec2.Subnet, error) {
 	p.Lock()
 	defer p.Unlock()
-	filterSets := getFilterSets(nodeClass.Spec.SubnetSelectorTerms)
+
+	filterSets := nodeClass.SubnetFilters()
 	if len(filterSets) == 0 {
 		return []*ec2.Subnet{}, nil
 	}
@@ -102,7 +103,7 @@ func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1beta1.EC2NodeCl
 }
 
 // CheckAnyPublicIPAssociations returns a bool indicating whether all referenced subnets assign public IPv4 addresses to EC2 instances created therein
-func (p *DefaultProvider) CheckAnyPublicIPAssociations(ctx context.Context, nodeClass *v1beta1.EC2NodeClass) (bool, error) {
+func (p *DefaultProvider) CheckAnyPublicIPAssociations(ctx context.Context, nodeClass v1beta1.AWSNodeClass) (bool, error) {
 	subnets, err := p.List(ctx, nodeClass)
 	if err != nil {
 		return false, err
@@ -114,13 +115,13 @@ func (p *DefaultProvider) CheckAnyPublicIPAssociations(ctx context.Context, node
 }
 
 // ZonalSubnetsForLaunch returns a mapping of zone to the subnet with the most available IP addresses and deducts the passed ips from the available count
-func (p *DefaultProvider) ZonalSubnetsForLaunch(ctx context.Context, nodeClass *v1beta1.EC2NodeClass, instanceTypes []*cloudprovider.InstanceType, capacityType string) (map[string]*ec2.Subnet, error) {
+func (p *DefaultProvider) ZonalSubnetsForLaunch(ctx context.Context, nodeClass v1beta1.AWSNodeClass, instanceTypes []*cloudprovider.InstanceType, capacityType string) (map[string]*ec2.Subnet, error) {
 	subnets, err := p.List(ctx, nodeClass)
 	if err != nil {
 		return nil, err
 	}
 	if len(subnets) == 0 {
-		return nil, fmt.Errorf("no subnets matched selector %v", nodeClass.Spec.SubnetSelectorTerms)
+		return nil, fmt.Errorf("no subnets matched selector")
 	}
 	p.Lock()
 	defer p.Unlock()
@@ -235,34 +236,4 @@ func (p *DefaultProvider) minPods(instanceTypes []*cloudprovider.InstanceType, z
 		return i.Capacity.Pods().Cmp(*j.Capacity.Pods()) < 0
 	}).Capacity.Pods().AsInt64()
 	return pods
-}
-
-func getFilterSets(terms []v1beta1.SubnetSelectorTerm) (res [][]*ec2.Filter) {
-	idFilter := &ec2.Filter{Name: aws.String("subnet-id")}
-	for _, term := range terms {
-		switch {
-		case term.ID != "":
-			idFilter.Values = append(idFilter.Values, aws.String(term.ID))
-		default:
-			var filters []*ec2.Filter
-			for k, v := range term.Tags {
-				if v == "*" {
-					filters = append(filters, &ec2.Filter{
-						Name:   aws.String("tag-key"),
-						Values: []*string{aws.String(k)},
-					})
-				} else {
-					filters = append(filters, &ec2.Filter{
-						Name:   aws.String(fmt.Sprintf("tag:%s", k)),
-						Values: []*string{aws.String(v)},
-					})
-				}
-			}
-			res = append(res, filters)
-		}
-	}
-	if len(idFilter.Values) > 0 {
-		res = append(res, []*ec2.Filter{idFilter})
-	}
-	return res
 }
