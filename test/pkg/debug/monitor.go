@@ -27,7 +27,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	"sigs.k8s.io/karpenter/pkg/operator/controller"
 
 	"sigs.k8s.io/karpenter/pkg/operator/scheme"
 )
@@ -80,8 +79,12 @@ func (m *Monitor) Stop() {
 	m.wg.Wait()
 }
 
-func newControllers(kubeClient client.Client) []controller.Controller {
-	return []controller.Controller{
+func newControllers(kubeClient client.Client) []interface {
+	Register(context.Context, manager.Manager) error
+} {
+	return []interface {
+		Register(context.Context, manager.Manager) error
+	}{
 		NewNodeClaimController(kubeClient),
 		NewNodeController(kubeClient),
 		NewPodController(kubeClient),
