@@ -17,16 +17,14 @@ package main
 import (
 	"github.com/samber/lo"
 
-	"github.com/aws/karpenter-provider-aws/pkg/cloudprovider"
-	"github.com/aws/karpenter-provider-aws/pkg/controllers"
-	"github.com/aws/karpenter-provider-aws/pkg/operator"
-	"github.com/aws/karpenter-provider-aws/pkg/webhooks"
-
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/metrics"
 	corecontrollers "sigs.k8s.io/karpenter/pkg/controllers"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	coreoperator "sigs.k8s.io/karpenter/pkg/operator"
-	corewebhooks "sigs.k8s.io/karpenter/pkg/webhooks"
+
+	"github.com/aws/karpenter-provider-aws/pkg/cloudprovider"
+	"github.com/aws/karpenter-provider-aws/pkg/controllers"
+	"github.com/aws/karpenter-provider-aws/pkg/operator"
 )
 
 func main() {
@@ -50,15 +48,16 @@ func main() {
 			op.GetClient(),
 			state.NewCluster(op.Clock, op.GetClient(), cloudProvider),
 			op.EventRecorder,
+			op.GetEventRecorderFor("controller"),
 			cloudProvider,
 		)...).
-		WithWebhooks(ctx, corewebhooks.NewWebhooks()...).
 		WithControllers(ctx, controllers.NewControllers(
 			ctx,
 			op.Session,
 			op.Clock,
 			op.GetClient(),
 			op.EventRecorder,
+			op.GetEventRecorderFor("controller"),
 			op.UnavailableOfferingsCache,
 			cloudProvider,
 			op.SubnetProvider,
@@ -70,6 +69,5 @@ func main() {
 			op.LaunchTemplateProvider,
 			op.InstanceTypesProvider,
 		)...).
-		WithWebhooks(ctx, webhooks.NewWebhooks()...).
 		Start(ctx)
 }

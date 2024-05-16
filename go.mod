@@ -12,6 +12,7 @@ require (
 	github.com/awslabs/operatorpkg v0.0.0-20240518001059-1e35978ba21b
 	github.com/go-logr/zapr v1.3.0
 	github.com/imdario/mergo v0.3.16
+	github.com/jonathan-innis/aws-sdk-go-prometheus v0.0.0-20240517060448-284632cbc712
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/onsi/ginkgo/v2 v2.17.3
 	github.com/onsi/gomega v1.33.1

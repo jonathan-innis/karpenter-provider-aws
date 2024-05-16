@@ -17,9 +17,12 @@ package controllers
 import (
 	"context"
 
+	"github.com/awslabs/operatorpkg/status"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	"sigs.k8s.io/karpenter/pkg/operator/controller"
 
+	"github.com/aws/karpenter-provider-aws/pkg/apis/v1beta1"
 	nodeclasshash "github.com/aws/karpenter-provider-aws/pkg/controllers/nodeclass/hash"
 	nodeclassstatus "github.com/aws/karpenter-provider-aws/pkg/controllers/nodeclass/status"
 	nodeclasstermination "github.com/aws/karpenter-provider-aws/pkg/controllers/nodeclass/termination"
@@ -50,7 +53,7 @@ import (
 	"github.com/aws/karpenter-provider-aws/pkg/providers/subnet"
 )
 
-func NewControllers(ctx context.Context, sess *session.Session, clk clock.Clock, kubeClient client.Client, recorder events.Recorder,
+func NewControllers(ctx context.Context, sess *session.Session, clk clock.Clock, kubeClient client.Client, recorder events.Recorder, eventRecorder record.EventRecorder,
 	unavailableOfferings *cache.UnavailableOfferings, cloudProvider cloudprovider.CloudProvider, subnetProvider subnet.Provider,
 	securityGroupProvider securitygroup.Provider, instanceProfileProvider instanceprofile.Provider, instanceProvider instance.Provider,
 	pricingProvider pricing.Provider, amiProvider amifamily.Provider, launchTemplateProvider launchtemplate.Provider, instanceTypeProvider instancetype.Provider) []controller.Controller {
@@ -63,6 +66,7 @@ func NewControllers(ctx context.Context, sess *session.Session, clk clock.Clock,
 		nodeclaimtagging.NewController(kubeClient, instanceProvider),
 		controllerspricing.NewController(pricingProvider),
 		controllersinstancetype.NewController(instanceTypeProvider),
+		status.NewController[*v1beta1.EC2NodeClass](kubeClient, eventRecorder),
 	}
 	if options.FromContext(ctx).InterruptionQueue != "" {
 		sqsapi := servicesqs.New(sess)
