@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/karpenter/pkg/utils/pretty"
 
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	pscheduling "sigs.k8s.io/karpenter/pkg/controllers/provisioning/scheduling"
@@ -281,6 +282,7 @@ func (env *Environment) EventuallyExpectHealthy(pods ...*corev1.Pod) {
 
 func (env *Environment) EventuallyExpectHealthyWithTimeout(timeout time.Duration, pods ...*corev1.Pod) {
 	GinkgoHelper()
+	By(fmt.Sprintf("waiting for %d pods to go healthy, pods=%v", len(pods), pretty.Slice(lo.Map(pods, func(p *corev1.Pod, _ int) string { return client.ObjectKeyFromObject(p).String() }), 10)))
 	Eventually(func(g Gomega) {
 		for _, pod := range pods {
 			g.Expect(env.Client.Get(env, client.ObjectKeyFromObject(pod), pod)).To(Succeed())
@@ -295,7 +297,7 @@ func (env *Environment) EventuallyExpectHealthyWithTimeout(timeout time.Duration
 
 func (env *Environment) ConsistentlyExpectHealthyPods(duration time.Duration, pods ...*corev1.Pod) {
 	GinkgoHelper()
-	By(fmt.Sprintf("expecting %d pods to be ready for %s", len(pods), duration))
+	By(fmt.Sprintf("expecting %d pods to be ready for %s, pods=%v", len(pods), duration), pretty.Slice(lo.Map(pods, func(p *corev1.Pod, _ int) string { return client.ObjectKeyFromObject(p).String() }), 10))
 	Consistently(func(g Gomega) {
 		for _, pod := range pods {
 			g.Expect(env.Client.Get(env, client.ObjectKeyFromObject(pod), pod)).To(Succeed())
