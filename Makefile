@@ -132,7 +132,7 @@ image: ## Build the Karpenter controller images using ko build
 	$(eval IMG_TAG=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 2 -s))
 	$(eval IMG_DIGEST=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 2))
 
-apply: verify image ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
+apply: image ## Deploy the controller from the current state of your git repository into your ~/.kube/config cluster
 	kubectl apply -f ./pkg/apis/crds/
 	helm upgrade --install karpenter charts/karpenter --namespace ${KARPENTER_NAMESPACE} \
         $(HELM_OPTS) \

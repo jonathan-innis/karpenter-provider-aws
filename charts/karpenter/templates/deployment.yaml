@@ -71,6 +71,8 @@ spec:
             readOnlyRootFilesystem: true
           image: {{ include "karpenter.controller.image" . }}
           imagePullPolicy: {{ .Values.imagePullPolicy }}
+          args:
+            - -v=1
           env:
             - name: KUBERNETES_MIN_VERSION
               value: "1.19.0-0"
