@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	sdk "github.com/aws/karpenter-provider-aws/pkg/aws"
 	"github.com/aws/karpenter-provider-aws/pkg/operator/options"
@@ -102,7 +103,7 @@ func NewAPI(cfg aws.Config) *pricing.Client {
 	//create pricing config using pricing endpoint
 	pricingCfg := cfg.Copy()
 	pricingCfg.Region = pricingAPIRegion
-	return pricing.NewFromConfig(pricingCfg)
+	return pricing.NewFromConfig(pricingCfg, func(opts *pricing.Options) { opts.MeterProvider = sdk.NewPrometheusMeterProvider(crmetrics.Registry) })
 }
 
 func NewDefaultProvider(_ context.Context, pricing sdk.PricingAPI, ec2Api sdk.EC2API, region string) *DefaultProvider {

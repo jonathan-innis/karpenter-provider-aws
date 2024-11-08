@@ -24,7 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/middleware"
-	config "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -40,12 +40,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/transport"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
-
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/operator"
-
-	prometheusv2 "github.com/jonathan-innis/aws-sdk-go-prometheus/v2"
 
 	sdk "github.com/aws/karpenter-provider-aws/pkg/aws"
 	awscache "github.com/aws/karpenter-provider-aws/pkg/cache"
@@ -86,7 +82,7 @@ type Operator struct {
 }
 
 func NewOperator(ctx context.Context, operator *operator.Operator) (context.Context, *Operator) {
-	cfg := prometheusv2.WithPrometheusMetrics(WithUserAgent(lo.Must(config.LoadDefaultConfig(ctx))), crmetrics.Registry)
+	cfg := WithUserAgent(lo.Must(config.LoadDefaultConfig(ctx)))
 	if cfg.Region == "" {
 		log.FromContext(ctx).V(1).Info("retrieving region from IMDS")
 		region := lo.Must(imds.NewFromConfig(cfg).GetRegion(ctx, nil))
