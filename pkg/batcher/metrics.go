@@ -34,14 +34,14 @@ func SizeBuckets() []float64 {
 }
 
 var (
-	batchWindowDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	BatchWindowDuration = metrics.NewPrometheusHistogram(crmetrics.Registry, prometheus.HistogramOpts{
 		Namespace: metrics.Namespace,
 		Subsystem: batcherSubsystem,
 		Name:      "batch_time_seconds",
 		Help:      "Duration of the batching window per batcher",
 		Buckets:   metrics.DurationBuckets(),
 	}, []string{batcherNameLabel})
-	batchSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	BatchSize = metrics.NewPrometheusHistogram(crmetrics.Registry, prometheus.HistogramOpts{
 		Namespace: metrics.Namespace,
 		Subsystem: batcherSubsystem,
 		Name:      "batch_size",
@@ -49,7 +49,3 @@ var (
 		Buckets:   SizeBuckets(),
 	}, []string{batcherNameLabel})
 )
-
-func init() {
-	crmetrics.Registry.MustRegister(batchWindowDuration, batchSize)
-}

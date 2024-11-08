@@ -149,7 +149,7 @@ func (c *Controller) handleMessage(ctx context.Context, nodeClaimInstanceIDMap m
 	nodeInstanceIDMap map[string]*corev1.Node, msg messages.Message) (err error) {
 
 	ctx = log.IntoContext(ctx, log.FromContext(ctx).WithValues("messageKind", msg.Kind()))
-	receivedMessages.WithLabelValues(string(msg.Kind())).Inc()
+	ReceivedMessages.Inc(map[string]string{messageTypeLabel: string(msg.Kind())})
 
 	if msg.Kind() == messages.NoOpKind {
 		return nil
@@ -164,7 +164,7 @@ func (c *Controller) handleMessage(ctx context.Context, nodeClaimInstanceIDMap m
 			err = multierr.Append(err, e)
 		}
 	}
-	messageLatency.Observe(time.Since(msg.StartTime()).Seconds())
+	MessageLatency.Observe(time.Since(msg.StartTime()).Seconds(), nil)
 	if err != nil {
 		return fmt.Errorf("acting on NodeClaims, %w", err)
 	}
@@ -176,7 +176,7 @@ func (c *Controller) deleteMessage(ctx context.Context, msg *sqsapi.Message) err
 	if err := c.sqsProvider.DeleteSQSMessage(ctx, msg); err != nil {
 		return fmt.Errorf("deleting sqs message, %w", err)
 	}
-	deletedMessages.Inc()
+	DeletedMessages.Inc(nil)
 	return nil
 }
 
@@ -215,11 +215,11 @@ func (c *Controller) deleteNodeClaim(ctx context.Context, msg messages.Message, 
 	}
 	log.FromContext(ctx).Info("initiating delete from interruption message")
 	c.recorder.Publish(interruptionevents.TerminatingOnInterruption(node, nodeClaim)...)
-	metrics.NodeClaimsDisruptedTotal.With(prometheus.Labels{
+	metrics.NodeClaimsDisruptedTotal.Inc(prometheus.Labels{
 		metrics.ReasonLabel:       string(msg.Kind()),
 		metrics.NodePoolLabel:     nodeClaim.Labels[karpv1.NodePoolLabelKey],
 		metrics.CapacityTypeLabel: nodeClaim.Labels[karpv1.CapacityTypeLabelKey],
-	}).Inc()
+	})
 	return nil
 }
 

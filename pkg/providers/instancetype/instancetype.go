@@ -132,12 +132,12 @@ func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 		return s.Zone, s.ZoneID
 	})
 	result := lo.FilterMap(p.instanceTypesInfo, func(i *ec2.InstanceTypeInfo, _ int) (*cloudprovider.InstanceType, bool) {
-		instanceTypeVCPU.With(prometheus.Labels{
-			instanceTypeLabel: *i.InstanceType,
-		}).Set(float64(lo.FromPtr(i.VCpuInfo.DefaultVCpus)))
-		instanceTypeMemory.With(prometheus.Labels{
-			instanceTypeLabel: *i.InstanceType,
-		}).Set(float64(lo.FromPtr(i.MemoryInfo.SizeInMiB) * 1024 * 1024))
+		InstanceTypeVCPU.Set(float64(lo.FromPtr(i.VCpuInfo.DefaultVCpus)), prometheus.Labels{
+			instanceTypeLabel: lo.FromPtr(i.InstanceType),
+		})
+		InstanceTypeMemory.Set(float64(lo.FromPtr(i.MemoryInfo.SizeInMiB)*1024*1024), prometheus.Labels{
+			instanceTypeLabel: lo.FromPtr(i.InstanceType),
+		})
 
 		zoneData := lo.Map(allZones.UnsortedList(), func(zoneName string, _ int) ZoneData {
 			if !p.instanceTypesOfferings[lo.FromPtr(i.InstanceType)].Has(zoneName) || !subnetZones.Has(zoneName) {
@@ -159,16 +159,16 @@ func (p *DefaultProvider) List(ctx context.Context, nodeClass *v1.EC2NodeClass) 
 			return nil, false
 		}
 		for _, of := range it.Offerings {
-			instanceTypeOfferingAvailable.With(prometheus.Labels{
+			InstanceTypeOfferingAvailable.Set(float64(lo.Ternary(of.Available, 1, 0)), prometheus.Labels{
 				instanceTypeLabel: it.Name,
 				capacityTypeLabel: of.Requirements.Get(karpv1.CapacityTypeLabelKey).Any(),
 				zoneLabel:         of.Requirements.Get(corev1.LabelTopologyZone).Any(),
-			}).Set(float64(lo.Ternary(of.Available, 1, 0)))
-			instanceTypeOfferingPriceEstimate.With(prometheus.Labels{
+			})
+			InstanceTypeOfferingPriceEstimate.Set(of.Price, prometheus.Labels{
 				instanceTypeLabel: it.Name,
 				capacityTypeLabel: of.Requirements.Get(karpv1.CapacityTypeLabelKey).Any(),
 				zoneLabel:         of.Requirements.Get(corev1.LabelTopologyZone).Any(),
-			}).Set(of.Price)
+			})
 		}
 		return it, true
 	})

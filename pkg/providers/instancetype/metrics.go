@@ -29,7 +29,8 @@ const (
 )
 
 var (
-	instanceTypeVCPU = prometheus.NewGaugeVec(
+	InstanceTypeVCPU = metrics.NewPrometheusGauge(
+		crmetrics.Registry,
 		prometheus.GaugeOpts{
 			Namespace: metrics.Namespace,
 			Subsystem: cloudProviderSubsystem,
@@ -40,7 +41,8 @@ var (
 			instanceTypeLabel,
 		},
 	)
-	instanceTypeMemory = prometheus.NewGaugeVec(
+	InstanceTypeMemory = metrics.NewPrometheusGauge(
+		crmetrics.Registry,
 		prometheus.GaugeOpts{
 			Namespace: metrics.Namespace,
 			Subsystem: cloudProviderSubsystem,
@@ -51,7 +53,8 @@ var (
 			instanceTypeLabel,
 		},
 	)
-	instanceTypeOfferingAvailable = prometheus.NewGaugeVec(
+	InstanceTypeOfferingAvailable = metrics.NewPrometheusGauge(
+		crmetrics.Registry,
 		prometheus.GaugeOpts{
 			Namespace: metrics.Namespace,
 			Subsystem: cloudProviderSubsystem,
@@ -64,7 +67,8 @@ var (
 			zoneLabel,
 		},
 	)
-	instanceTypeOfferingPriceEstimate = prometheus.NewGaugeVec(
+	InstanceTypeOfferingPriceEstimate = metrics.NewPrometheusGauge(
+		crmetrics.Registry,
 		prometheus.GaugeOpts{
 			Namespace: metrics.Namespace,
 			Subsystem: cloudProviderSubsystem,
@@ -77,7 +81,3 @@ var (
 			zoneLabel,
 		})
 )
-
-func init() {
-	crmetrics.Registry.MustRegister(instanceTypeVCPU, instanceTypeMemory, instanceTypeOfferingAvailable, instanceTypeOfferingPriceEstimate)
-}

@@ -27,7 +27,8 @@ const (
 )
 
 var (
-	receivedMessages = prometheus.NewCounterVec(
+	ReceivedMessages = metrics.NewPrometheusCounter(
+		crmetrics.Registry,
 		prometheus.CounterOpts{
 			Namespace: metrics.Namespace,
 			Subsystem: interruptionSubsystem,
@@ -36,15 +37,18 @@ var (
 		},
 		[]string{messageTypeLabel},
 	)
-	deletedMessages = prometheus.NewCounter(
+	DeletedMessages = metrics.NewPrometheusCounter(
+		crmetrics.Registry,
 		prometheus.CounterOpts{
 			Namespace: metrics.Namespace,
 			Subsystem: interruptionSubsystem,
 			Name:      "deleted_messages_total",
 			Help:      "Count of messages deleted from the SQS queue.",
 		},
+		[]string{},
 	)
-	messageLatency = prometheus.NewHistogram(
+	MessageLatency = metrics.NewPrometheusHistogram(
+		crmetrics.Registry,
 		prometheus.HistogramOpts{
 			Namespace: metrics.Namespace,
 			Subsystem: interruptionSubsystem,
@@ -52,9 +56,6 @@ var (
 			Help:      "Amount of time an interruption message is on the queue before it is processed by karpenter.",
 			Buckets:   metrics.DurationBuckets(),
 		},
+		[]string{},
 	)
 )
-
-func init() {
-	crmetrics.Registry.MustRegister(receivedMessages, deletedMessages, messageLatency)
-}
