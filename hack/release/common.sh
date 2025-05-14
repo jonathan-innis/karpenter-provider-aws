@@ -4,8 +4,8 @@ set -euo pipefail
 ECR_GALLERY_NAME="karpenter"
 RELEASE_REPO_ECR="${RELEASE_REPO_ECR:-public.ecr.aws/${ECR_GALLERY_NAME}/}"
 
-SNAPSHOT_ECR="021119463062.dkr.ecr.us-east-1.amazonaws.com"
-SNAPSHOT_REPO_ECR="${SNAPSHOT_REPO_ECR:-${SNAPSHOT_ECR}/karpenter/snapshot/}"
+SNAPSHOT_ECR="953421922360.dkr.ecr.us-west-2.amazonaws.com"
+SNAPSHOT_REPO_ECR="${SNAPSHOT_REPO_ECR:-${SNAPSHOT_ECR}/karpenter/}"
 
 CURRENT_MAJOR_VERSION="0"
 
@@ -46,7 +46,7 @@ authenticate() {
 }
 
 authenticatePrivateRepo() {
-  aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "${SNAPSHOT_ECR}"
+  aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin "${SNAPSHOT_ECR}"
 }
 
 build() {
@@ -57,22 +57,22 @@ build() {
   helm_chart_version="${3}"
   commit_sha="${4}"
 
-  date_epoch="$(dateEpoch)"
-  build_date="$(buildDate "${date_epoch}")"
+#  date_epoch="$(dateEpoch)"
+#  build_date="$(buildDate "${date_epoch}")"
 
-  img="$(GOFLAGS=${GOFLAGS:-} SOURCE_DATE_EPOCH="${date_epoch}" KO_DATA_DATE_EPOCH="${date_epoch}" KO_DOCKER_REPO="${oci_repo}" ko publish -B -t "${version}" ./cmd/controller)"
+  img="$(GOFLAGS=${GOFLAGS:-} KO_DOCKER_REPO="${oci_repo}" ko publish -B -t "${version}" ./cmd/controller)"
   img_repo="$(echo "${img}" | cut -d "@" -f 1 | cut -d ":" -f 1)"
   img_tag="$(echo "${img}" | cut -d "@" -f 1 | cut -d ":" -f 2 -s)"
   img_digest="$(echo "${img}" | cut -d "@" -f 2)"
 
-  cosignOciArtifact "${version}" "${commit_sha}" "${build_date}" "${img}"
+#  cosignOciArtifact "${version}" "${commit_sha}" "${build_date}" "${img}"
 
   yq e -i ".controller.image.repository = \"${img_repo}\"" charts/karpenter/values.yaml
   yq e -i ".controller.image.tag = \"${img_tag}\"" charts/karpenter/values.yaml
   yq e -i ".controller.image.digest = \"${img_digest}\"" charts/karpenter/values.yaml
 
-  publishHelmChart "${oci_repo}" "karpenter" "${helm_chart_version}" "${commit_sha}" "${build_date}"
-  publishHelmChart "${oci_repo}" "karpenter-crd" "${helm_chart_version}" "${commit_sha}" "${build_date}"
+  publishHelmChart "${oci_repo}" "karpenter" "${helm_chart_version}" "${commit_sha}"
+  publishHelmChart "${oci_repo}" "karpenter-crd" "${helm_chart_version}" "${commit_sha}"
 }
 
 publishHelmChart() {
@@ -82,7 +82,7 @@ publishHelmChart() {
   helm_chart="${2}"
   version="${3}"
   commit_sha="${4}"
-  build_date="${5}"
+#  build_date="${5}"
 
   ah_config_file_name="${helm_chart}/artifacthub-repo.yaml"
   helm_chart_artifact="${helm_chart}-${version}.tgz"
@@ -91,14 +91,14 @@ publishHelmChart() {
   yq e -i ".version = \"${version}\"" "charts/${helm_chart}/Chart.yaml"
 
   cd charts
-  if [[ -s "${ah_config_file_name}" ]] && [[ "$oci_repo" == "${RELEASE_REPO_ECR}" ]]; then
-    # ECR requires us to create an empty config file for an alternative
-    # media type artifact push rather than /dev/null
-    # https://github.com/aws/containers-roadmap/issues/1074
-    temp=$(mktemp)
-    echo {} > "${temp}"
-    oras push "${oci_repo}${helm_chart}:artifacthub.io" --config "${temp}:application/vnd.cncf.artifacthub.config.v1+yaml" "${ah_config_file_name}:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"
-  fi
+#  if [[ -s "${ah_config_file_name}" ]] && [[ "$oci_repo" == "${RELEASE_REPO_ECR}" ]]; then
+#    # ECR requires us to create an empty config file for an alternative
+#    # media type artifact push rather than /dev/null
+#    # https://github.com/aws/containers-roadmap/issues/1074
+#    temp=$(mktemp)
+#    echo {} > "${temp}"
+#    oras push "${oci_repo}${helm_chart}:artifacthub.io" --config "${temp}:application/vnd.cncf.artifacthub.config.v1+yaml" "${ah_config_file_name}:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml"
+#  fi
   helm dependency update "${helm_chart}"
   helm lint "${helm_chart}"
   helm package "${helm_chart}" --version "${version}"
@@ -107,7 +107,7 @@ publishHelmChart() {
   cd ..
 
   helm_chart_digest="$(crane digest "${oci_repo}/${helm_chart}:${version}")"
-  cosignOciArtifact "${version}" "${commit_sha}" "${build_date}" "${oci_repo}${helm_chart}:${version}@${helm_chart_digest}"
+#  cosignOciArtifact "${version}" "${commit_sha}" "${build_date}" "${oci_repo}${helm_chart}:${version}@${helm_chart_digest}"
 }
 
 cosignOciArtifact() {
