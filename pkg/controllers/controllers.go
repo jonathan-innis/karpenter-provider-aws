@@ -22,6 +22,7 @@ import (
 	"github.com/patrickmn/go-cache"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
+	coreoptions "sigs.k8s.io/karpenter/pkg/operator/options"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	servicesqs "github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -94,10 +95,14 @@ func NewControllers(
 		controllersinstancetype.NewController(instanceTypeProvider),
 		controllersinstancetypecapacity.NewController(kubeClient, cloudProvider, instanceTypeProvider),
 		ssminvalidation.NewController(ssmCache, amiProvider),
-		status.NewController[*v1.EC2NodeClass](kubeClient, mgr.GetEventRecorderFor("karpenter"), status.EmitDeprecatedMetrics),
 		controllersversion.NewController(versionProvider, versionProvider.UpdateVersionWithValidation),
 		capacityreservation.NewController(kubeClient, cloudProvider),
-		metrics.NewController(kubeClient, cloudProvider),
+	}
+	if !coreoptions.FromContext(ctx).FeatureGates.DisableMetricsControllers {
+		controllers = append(controllers,
+			status.NewController[*v1.EC2NodeClass](kubeClient, mgr.GetEventRecorderFor("karpenter"), status.EmitDeprecatedMetrics),
+			metrics.NewController(kubeClient, cloudProvider),
+		)
 	}
 	if options.FromContext(ctx).InterruptionQueue != "" {
 		sqsAPI := servicesqs.NewFromConfig(cfg)
