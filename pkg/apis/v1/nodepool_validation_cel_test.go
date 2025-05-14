@@ -72,7 +72,7 @@ var _ = Describe("CEL/Validation", func() {
 			oldNodePool := nodePool.DeepCopy()
 			for label := range karpv1.WellKnownLabels.Difference(sets.New(karpv1.NodePoolLabelKey, karpv1.CapacityTypeLabelKey)) {
 				nodePool.Spec.Template.Spec.Requirements = []karpv1.NodeSelectorRequirementWithMinValues{
-					{NodeSelectorRequirement: corev1.NodeSelectorRequirement{Key: label, Operator: corev1.NodeSelectorOpIn, Values: []string{"test"}}},
+					{NodeSelectorRequirement: corev1.NodeSelectorRequirement{Key: label, Operator: corev1.NodeSelectorOpIn, Values: []string{"on-demand"}}},
 				}
 				Expect(env.Client.Create(ctx, nodePool)).To(Succeed())
 				Expect(nodePool.RuntimeValidate(ctx)).To(Succeed())
@@ -127,8 +127,13 @@ var _ = Describe("CEL/Validation", func() {
 		It("should allow restricted domains exceptions", func() {
 			oldNodePool := nodePool.DeepCopy()
 			for label := range karpv1.LabelDomainExceptions {
+				_, ok := karpv1.WellKnownValuesForRequirements[label]
+				value := "test"
+				if ok {
+					value = karpv1.WellKnownValuesForRequirements[label].UnsortedList()[0]
+				}
 				nodePool.Spec.Template.Labels = map[string]string{
-					label: "test",
+					label: value,
 				}
 				Expect(env.Client.Create(ctx, nodePool)).To(Succeed())
 				Expect(nodePool.RuntimeValidate(ctx)).To(Succeed())
@@ -139,8 +144,13 @@ var _ = Describe("CEL/Validation", func() {
 		It("should allow well known label exceptions", func() {
 			oldNodePool := nodePool.DeepCopy()
 			for label := range karpv1.WellKnownLabels.Difference(sets.New(karpv1.NodePoolLabelKey)) {
+				_, ok := karpv1.WellKnownValuesForRequirements[label]
+				value := "test"
+				if ok {
+					value = karpv1.WellKnownValuesForRequirements[label].UnsortedList()[0]
+				}
 				nodePool.Spec.Template.Labels = map[string]string{
-					label: "test",
+					label: value,
 				}
 				Expect(env.Client.Create(ctx, nodePool)).To(Succeed())
 				Expect(nodePool.RuntimeValidate(ctx)).To(Succeed())
