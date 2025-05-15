@@ -79,7 +79,7 @@ func (c *Controller) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	}
 	errs := make([]error, len(cloudNodeClaims))
 	workqueue.ParallelizeUntil(ctx, 100, len(cloudNodeClaims), func(i int) {
-		if nc := cloudNodeClaims[i]; !clusterProviderIDs.Has(nc.Status.ProviderID) && time.Since(nc.CreationTimestamp.Time) > time.Second*30 {
+		if nc := cloudNodeClaims[i]; !clusterProviderIDs.Has(nc.Status.ProviderID) && time.Since(nc.CreationTimestamp.Time) > time.Minute*2 {
 			errs[i] = c.garbageCollect(ctx, cloudNodeClaims[i], nodeList)
 		}
 	})
