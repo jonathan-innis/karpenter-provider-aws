@@ -38,7 +38,7 @@ func NewCreateFleetBatcher(ctx context.Context, ec2api sdk.EC2API) *CreateFleetB
 		Name:          "create_fleet",
 		IdleTimeout:   35 * time.Millisecond,
 		MaxTimeout:    1 * time.Second,
-		MaxItems:      1_000,
+		MaxItems:      50,
 		RequestHasher: DefaultHasher[ec2.CreateFleetInput],
 		BatchExecutor: execCreateFleetBatch(ec2api),
 	}

@@ -127,8 +127,8 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/jonathan-innis/aws-sdk-go-prometheus v0.1.1 h1:gmpuckrozJ3lfKqSIia9YMGh0caoQmEY7mQP5MsnbTM=
 github.com/jonathan-innis/aws-sdk-go-prometheus v0.1.1/go.mod h1:168XvZFghCqo32ISSWnTXwdlMKzEq+x9TqdfswCjkrQ=
-github.com/jonathan-innis/karpenter v0.0.4-0.20250515064958-27af34cd8dc6 h1:cb044KKB0pq+hfAoTuV9wuQo2JdC6dpIrXpdq6frnkM=
-github.com/jonathan-innis/karpenter v0.0.4-0.20250515064958-27af34cd8dc6/go.mod h1:YuqGoQsLti+V7ugHQVGXuT4v1QwCMiKloHLcPDfwMbY=
+github.com/jonathan-innis/karpenter v0.0.4-0.20250529065856-5ceee068621c h1:X0BlLvLhOENBCTKFjyhzfbWB45Bcx7pvw5AqxaypRvY=
+github.com/jonathan-innis/karpenter v0.0.4-0.20250529065856-5ceee068621c/go.mod h1:YuqGoQsLti+V7ugHQVGXuT4v1QwCMiKloHLcPDfwMbY=
 github.com/josharian/intern v1.0.0 h1:vlS4z54oSdjm0bgjRigI+G1HpF+tI+9rE5LLzOg8HmY=
 github.com/josharian/intern v1.0.0/go.mod h1:5DoeVV0s6jJacbCEi61lwdGj/aVlrQvzHFFd8Hwg//Y=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=

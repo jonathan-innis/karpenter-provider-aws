@@ -18,6 +18,7 @@ HELM_OPTS ?= --set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${K
 			--set settings.featureGates.nodeRepair=true \
 			--set settings.featureGates.reservedCapacity=true \
 			--set settings.featureGates.spotToSpotConsolidation=true \
+			--set settings.featureGates.disableMetricsControllers=true \
 			--set settings.preferencePolicy=Ignore \
 			--create-namespace
 
@@ -41,7 +42,11 @@ apply: image
         --set controller.image.tag=$(IMG_TAG) \
         --set controller.image.digest=$(IMG_DIGEST) \
         --set-string controller.env[0].name=ENABLE_PROFILING \
-        --set-string controller.env[0].value=true
+        --set-string controller.env[0].value=true \
+        --set-string controller.env[1].name=AWS_ENDPOINT_URL_EKS \
+        --set-string controller.env[1].value=https://api.beta.us-west-2.wesley.amazonaws.com \
+        --set-string controller.env[2].name=GOGC \
+        --set-string controller.env[2].value=off
 
 .PHONY: delete
 delete:

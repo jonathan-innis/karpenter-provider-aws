@@ -198,6 +198,8 @@ func (b *CreateFleetInputBuilder) Build() *ec2.CreateFleetInput {
 		input.OnDemandOptions = &ec2types.OnDemandOptionsRequest{
 			AllocationStrategy: ec2types.FleetOnDemandAllocationStrategyLowestPrice,
 		}
+	} else {
+		input.OnDemandOptions = &ec2types.OnDemandOptionsRequest{AllocationStrategy: "instance-flexible"}
 	}
 	return input
 }
