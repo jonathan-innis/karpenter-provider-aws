@@ -1,7 +1,7 @@
 KARPENTER_NAMESPACE ?= kube-system
 KO_DOCKER_REPO ?= ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/kwok-karpenter
-CPU_RESOURCES ?= "2"
-MEMORY_RESOURCES ?= "4Gi"
+CPU_RESOURCES ?= "60"
+MEMORY_RESOURCES ?= "100Gi"
 
 ## Extra helm options
 CLUSTER_NAME ?= $(shell kubectl config view --minify -o jsonpath='{.clusters[].name}' | rev | cut -d"/" -f1 | rev | cut -d"." -f1)
@@ -45,8 +45,10 @@ apply: image
         --set-string controller.env[0].value=true \
         --set-string controller.env[1].name=AWS_ENDPOINT_URL_EKS \
         --set-string controller.env[1].value=https://api.beta.us-west-2.wesley.amazonaws.com \
-        --set-string controller.env[2].name=GOGC \
-        --set-string controller.env[2].value=off
+        --set-string controller.env[2].name=KUBE_CLIENT_QPS \
+        --set-string controller.env[2].value="50000" \
+        --set-string controller.env[3].name=KUBE_CLIENT_BURST \
+        --set-string controller.env[3].value="50000"
 
 .PHONY: delete
 delete:

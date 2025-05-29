@@ -50,7 +50,7 @@ require (
 	sigs.k8s.io/yaml v1.4.0
 )
 
-replace sigs.k8s.io/karpenter => github.com/jonathan-innis/karpenter v0.0.4-0.20250529065856-5ceee068621c
+replace sigs.k8s.io/karpenter => github.com/jonathan-innis/karpenter v0.0.4-0.20250531171621-15b18f83b79e
 
 require (
 	github.com/Masterminds/semver/v3 v3.3.0 // indirect
