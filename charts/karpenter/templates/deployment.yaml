@@ -133,6 +133,10 @@ spec:
             - name: PREFERENCE_POLICY
               value: "{{ . }}"
           {{- end }}
+          {{- with .Values.settings.awsCreateQPS }}
+            - name: AWS_CREATE_QPS
+              value: "{{ . }}"
+          {{- end }}
           {{- with .Values.settings.clusterCABundle }}
             - name: CLUSTER_CA_BUNDLE
               value: "{{ tpl (toString .) $ }}"

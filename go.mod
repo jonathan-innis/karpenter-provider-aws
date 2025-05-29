@@ -24,7 +24,7 @@ require (
 	github.com/awslabs/amazon-eks-ami/nodeadm v0.0.0-20240229193347-cfab22a10647
 	github.com/awslabs/operatorpkg v0.0.0-20250425180727-b22281cd8057
 	github.com/awslabs/operatorpkg/aws v0.0.0-20250414225955-b47cd315ffe9
-	github.com/docker/docker v28.1.1+incompatible
+	github.com/docker/docker v28.2.2+incompatible
 	github.com/go-logr/zapr v1.3.0
 	github.com/google/uuid v1.6.0
 	github.com/imdario/mergo v0.3.16
@@ -50,7 +50,7 @@ require (
 	sigs.k8s.io/yaml v1.4.0
 )
 
-replace sigs.k8s.io/karpenter => github.com/jonathan-innis/karpenter v0.0.4-0.20250529065856-5ceee068621c
+replace sigs.k8s.io/karpenter => github.com/jonathan-innis/karpenter v0.0.4-0.20250604214521-f1d50f3e6378
 
 require (
 	github.com/Masterminds/semver/v3 v3.3.0 // indirect
@@ -73,7 +73,7 @@ require (
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
-	github.com/go-logr/logr v1.4.2 // indirect
+	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
