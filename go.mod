@@ -50,7 +50,7 @@ require (
 	sigs.k8s.io/yaml v1.4.0
 )
 
-replace sigs.k8s.io/karpenter => github.com/jonathan-innis/karpenter v0.0.4-0.20250529065856-5ceee068621c
+replace sigs.k8s.io/karpenter => github.com/jonathan-innis/karpenter v0.0.4-0.20250627185855-9636e907a3f8
 
 require (
 	github.com/Masterminds/semver/v3 v3.3.0 // indirect
@@ -118,9 +118,9 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/cloud-provider v0.33.1 // indirect
+	k8s.io/cloud-provider v0.33.2 // indirect
 	k8s.io/component-base v0.33.2 // indirect
-	k8s.io/csi-translation-lib v0.33.1 // indirect
+	k8s.io/csi-translation-lib v0.33.2 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
 	sigs.k8s.io/json v0.0.0-20241010143419-9aa6b5e7a4b3 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect

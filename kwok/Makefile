@@ -1,7 +1,7 @@
 KARPENTER_NAMESPACE ?= kube-system
 KO_DOCKER_REPO ?= ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/kwok-karpenter
-CPU_RESOURCES ?= "2"
-MEMORY_RESOURCES ?= "4Gi"
+CPU_RESOURCES ?= "60"
+MEMORY_RESOURCES ?= "100Gi"
 
 ## Extra helm options
 CLUSTER_NAME ?= $(shell kubectl config view --minify -o jsonpath='{.clusters[].name}' | rev | cut -d"/" -f1 | rev | cut -d"." -f1)
@@ -20,13 +20,14 @@ HELM_OPTS ?= --set serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${K
 			--set settings.featureGates.spotToSpotConsolidation=true \
 			--set settings.featureGates.disableMetricsControllers=true \
 			--set settings.preferencePolicy=Ignore \
+			--set settings.awsCreateQPS=50000 \
 			--create-namespace
 
 KARPENTER_CORE_DIR = $(shell go list -m -f '{{ .Dir }}' sigs.k8s.io/karpenter)
 
 .PHONY: image
 image: ## Build the KWOK controller images using ko build
-	$(eval CONTROLLER_IMG=$(shell KOCACHE=$(KOCACHE) KO_DOCKER_REPO="$(KO_DOCKER_REPO)" ko build --bare github.com/aws/karpenter-provider-aws/kwok))
+	$(eval CONTROLLER_IMG=$(shell KOCACHE=$(KOCACHE) KO_DOCKER_REPO="$(KO_DOCKER_REPO)" ko build --sbom=none --bare github.com/aws/karpenter-provider-aws/kwok))
 	$(eval IMG_REPOSITORY=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 1))
 	$(eval IMG_TAG=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 2 -s))
 	$(eval IMG_DIGEST=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 2))
@@ -37,16 +38,18 @@ apply: image
 	KARPENTER_NAMESPACE=$(KARPENTER_NAMESPACE) envsubst < ./manifests/clusterrole.yaml | kubectl apply -f -
 	helm upgrade --install kwok-karpenter ../charts/karpenter --namespace ${KARPENTER_NAMESPACE} \
         $(HELM_OPTS) \
-        --set logLevel=debug \
+        --set logLevel=info \
         --set controller.image.repository=$(IMG_REPOSITORY) \
         --set controller.image.tag=$(IMG_TAG) \
         --set controller.image.digest=$(IMG_DIGEST) \
         --set-string controller.env[0].name=ENABLE_PROFILING \
         --set-string controller.env[0].value=true \
-        --set-string controller.env[1].name=AWS_ENDPOINT_URL_EKS \
-        --set-string controller.env[1].value=https://api.beta.us-west-2.wesley.amazonaws.com \
-        --set-string controller.env[2].name=GOGC \
-        --set-string controller.env[2].value=off
+        --set-string controller.env[1].name=KUBE_CLIENT_QPS \
+        --set-string controller.env[1].value="50000" \
+        --set-string controller.env[2].name=KUBE_CLIENT_BURST \
+        --set-string controller.env[2].value="50000" \
+        --set-string controller.env[3].name=AWS_ENDPOINT_URL_EKS \
+        --set-string controller.env[3].value="https://api.beta.us-west-2.wesley.amazonaws.com"
 
 .PHONY: delete
 delete:

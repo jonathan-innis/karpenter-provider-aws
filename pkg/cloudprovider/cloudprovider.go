@@ -301,6 +301,11 @@ func (c *CloudProvider) RepairPolicies() []cloudprovider.RepairPolicy {
 			ConditionStatus:    corev1.ConditionFalse,
 			TolerationDuration: 30 * time.Minute,
 		},
+		{
+			ConditionType:      "TestTypeReady",
+			ConditionStatus:    corev1.ConditionFalse,
+			TolerationDuration: 30 * time.Second,
+		},
 	}
 }
 
