@@ -2,8 +2,8 @@ apiVersion: v2
 name: karpenter
 description: A Helm chart for Karpenter, an open-source node provisioning project built for Kubernetes.
 type: application
-version: 0-9d97245844e0660c88817ef4f1aed3053b88132c
-appVersion: 0-9d97245844e0660c88817ef4f1aed3053b88132c
+version: 0-d16df9153ae6f77a55f9485e1e4e92a9d24f48ce
+appVersion: 0-d16df9153ae6f77a55f9485e1e4e92a9d24f48ce
 keywords:
   - cluster
   - node
