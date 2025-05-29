@@ -19,10 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 
 	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	"github.com/aws/smithy-go"
 	"github.com/awslabs/operatorpkg/aws/middleware"
+	"github.com/awslabs/operatorpkg/option"
 	"github.com/awslabs/operatorpkg/serrors"
+	"k8s.io/client-go/util/flowcontrol"
 	"sigs.k8s.io/karpenter/pkg/events"
 
 	sdk "github.com/aws/karpenter-provider-aws/pkg/aws"
@@ -90,6 +94,7 @@ type DefaultProvider struct {
 	launchTemplateProvider      launchtemplate.Provider
 	ec2Batcher                  *batcher.EC2API
 	capacityReservationProvider capacityreservation.Provider
+	rateLimiter                 flowcontrol.RateLimiter
 }
 
 func NewDefaultProvider(
@@ -111,10 +116,17 @@ func NewDefaultProvider(
 		launchTemplateProvider:      launchTemplateProvider,
 		ec2Batcher:                  batcher.EC2(ctx, ec2api),
 		capacityReservationProvider: capacityReservationProvider,
+		rateLimiter:                 flowcontrol.NewTokenBucketRateLimiter(float32(lo.Must(strconv.ParseFloat(option.MustGetEnv("AWS_CREATE_QPS"), 64))), int(lo.Must(strconv.ParseFloat(option.MustGetEnv("AWS_CREATE_QPS"), 64)))), // artificially rate-limit
 	}
 }
 
 func (p *DefaultProvider) Create(ctx context.Context, nodeClass *v1.EC2NodeClass, nodeClaim *karpv1.NodeClaim, tags map[string]string, instanceTypes []*cloudprovider.InstanceType) (*Instance, error) {
+	if !p.rateLimiter.TryAccept() {
+		return nil, &smithy.GenericAPIError{
+			Code:    awserrors.RateLimitingErrorCode,
+			Message: "Request was client-side rate limited",
+		}
+	}
 	instanceTypes, err := p.filterInstanceTypes(ctx, instanceTypes, nodeClaim)
 	if err != nil {
 		return nil, err
@@ -190,6 +202,7 @@ func (p *DefaultProvider) List(ctx context.Context) ([]*Instance, error) {
 			},
 			instanceStateFilter,
 		},
+		MaxResults: lo.ToPtr[int32](1000),
 	})
 
 	for paginator.HasMorePages() {

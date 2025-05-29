@@ -122,9 +122,9 @@ controller:
     # -- Repository path to the controller image.
     repository: 953421922360.dkr.ecr.us-west-2.amazonaws.com/karpenter/controller
     # -- Tag of the controller image.
-    tag: 9d97245844e0660c88817ef4f1aed3053b88132c
+    tag: 08438d67e875f81632d21706eaa63454d90b8e59
     # -- SHA256 digest of the controller image.
-    digest: sha256:5465957295284d56893fc12a4d1c5381163d7caf60e582d45a963a6266814040
+    digest: sha256:0e50479484f60b42b700ef9a53150654ae33e635c15c90b53a645928050c6711
   # -- Additional environment variables for the controller pod.
   env: []
   # - name: AWS_REGION
@@ -174,6 +174,7 @@ logErrorOutputPaths:
   - stderr
 # -- Global Settings to configure Karpenter
 settings:
+  awsCreateQPS: 20
   # -- The maximum length of a batch window. The longer this is, the more pods we can consider for provisioning at one
   # time which usually results in fewer but larger nodes.
   batchMaxDuration: 10s

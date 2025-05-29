@@ -22,7 +22,7 @@ require (
 	github.com/aws/karpenter-provider-aws/tools/kompat v0.0.0-20240410220356-6b868db24881
 	github.com/aws/smithy-go v1.22.4
 	github.com/awslabs/amazon-eks-ami/nodeadm v0.0.0-20240229193347-cfab22a10647
-	github.com/awslabs/operatorpkg v0.0.0-20250616190804-f562c7d91bac
+	github.com/awslabs/operatorpkg v0.0.0-20250624064700-e9977193119b
 	github.com/awslabs/operatorpkg/aws v0.0.0-20250414225955-b47cd315ffe9
 	github.com/docker/docker v28.2.2+incompatible
 	github.com/go-logr/zapr v1.3.0
@@ -50,7 +50,7 @@ require (
 	sigs.k8s.io/yaml v1.4.0
 )
 
-replace sigs.k8s.io/karpenter => github.com/jonathan-innis/karpenter v0.0.4-0.20250529065856-5ceee068621c
+replace sigs.k8s.io/karpenter => github.com/jonathan-innis/karpenter v0.0.4-0.20250702005929-0802de61a133
 
 require (
 	github.com/Masterminds/semver/v3 v3.3.0 // indirect
@@ -118,9 +118,9 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/cloud-provider v0.33.1 // indirect
+	k8s.io/cloud-provider v0.33.2 // indirect
 	k8s.io/component-base v0.33.2 // indirect
-	k8s.io/csi-translation-lib v0.33.1 // indirect
+	k8s.io/csi-translation-lib v0.33.2 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
 	sigs.k8s.io/json v0.0.0-20241010143419-9aa6b5e7a4b3 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect

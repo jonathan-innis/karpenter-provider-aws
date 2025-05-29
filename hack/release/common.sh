@@ -60,7 +60,7 @@ build() {
 #  date_epoch="$(dateEpoch)"
 #  build_date="$(buildDate "${date_epoch}")"
 
-  img="$(GOFLAGS=${GOFLAGS:-} KO_DOCKER_REPO="${oci_repo}" ko publish -B -t "${version}" ./cmd/controller)"
+  img="$(GOFLAGS=${GOFLAGS:-} KO_DOCKER_REPO="${oci_repo}" ko publish --sbom=none -B -t "${version}" ./cmd/controller)"
   img_repo="$(echo "${img}" | cut -d "@" -f 1 | cut -d ":" -f 1)"
   img_tag="$(echo "${img}" | cut -d "@" -f 1 | cut -d ":" -f 2 -s)"
   img_digest="$(echo "${img}" | cut -d "@" -f 2)"

@@ -65,8 +65,9 @@ type Client struct {
 	subnets       []ec2types.Subnet
 	strategy      strategy.Strategy
 
-	instances             sync.Map
-	instanceLaunchCancels sync.Map
+	mu                    sync.RWMutex
+	instances             map[string]ec2types.Instance
+	instanceLaunchCancels map[string]context.CancelFunc
 
 	readBackupCompleted chan struct{}
 
@@ -104,8 +105,8 @@ func NewClient(region, namespace string, ec2Client *ec2.Client, rateLimiterProvi
 		subnets:       subnets,
 		strategy:      strategy,
 
-		instances:             sync.Map{},
-		instanceLaunchCancels: sync.Map{},
+		instances:             map[string]ec2types.Instance{},
+		instanceLaunchCancels: map[string]context.CancelFunc{},
 
 		readBackupCompleted: make(chan struct{}),
 
@@ -133,11 +134,12 @@ func (c *Client) ReadBackup(ctx context.Context) {
 			var instances []ec2types.Instance
 			lo.Must0(json.Unmarshal([]byte(cm.Data["instances"]), &instances))
 			for _, instance := range instances {
-				c.instances.Store(lo.FromPtr(instance.InstanceId), instance)
+				c.instances[lo.FromPtr(instance.InstanceId)] = instance
 				// Register nodes immediately if we killed the KWOK controller before actually registering the node
 				if !instanceIDs.Has(lo.FromPtr(instance.InstanceId)) {
 					log.FromContext(ctx).WithValues("instance-id", lo.FromPtr(instance.InstanceId)).Info("creating node for instance id")
-					lo.Must0(c.kubeClient.Create(ctx, c.toNode(ctx, instance)))
+					nodePoolName, availabilityZone, instanceType := c.resolveNodeDetails(instance)
+					lo.Must0(c.kubeClient.Create(ctx, c.toNode(ctx, lo.FromPtr(instance.InstanceId), nodePoolName, availabilityZone, instanceType)))
 				}
 			}
 			total += len(instances)
@@ -149,11 +151,10 @@ func (c *Client) ReadBackup(ctx context.Context) {
 
 //nolint:gocyclo
 func (c *Client) backupInstances(ctx context.Context) error {
-	var instances []ec2types.Instance
-	c.instances.Range(func(k, v interface{}) bool {
-		instances = append(instances, v.(ec2types.Instance))
-		return true
-	})
+
+	c.mu.RLock()
+	instances := lo.MapToSlice(c.instances, func(_ string, i ec2types.Instance) ec2types.Instance { return deepCopyInstance(i) })
+	c.mu.RUnlock()
 	sort.Slice(instances, func(i, j int) bool {
 		return lo.FromPtr(instances[i].LaunchTime).Before(lo.FromPtr(instances[j].LaunchTime))
 	})
@@ -237,12 +238,15 @@ func (c *Client) backupInstances(ctx context.Context) error {
 func (c *Client) StartBackupThread(ctx context.Context) {
 	<-c.readBackupCompleted
 	for {
-		if err := c.backupInstances(ctx); err != nil {
+		if err := retry.OnError(retry.DefaultBackoff, func(e error) bool {
+			return true
+		}, func() error {
+			return c.backupInstances(ctx)
+		}); err != nil {
 			log.FromContext(ctx).Error(err, "unable to backup instances")
-			continue
 		}
 		select {
-		case <-time.After(time.Second):
+		case <-time.After(time.Minute):
 		case <-ctx.Done():
 			return
 		}
@@ -264,10 +268,14 @@ func (c *Client) StartKillNodeThread(ctx context.Context) {
 				log.FromContext(ctx).WithValues("Node", klog.KObj(&node)).Error(err, "unable to parse instance id")
 				continue
 			}
-			if _, ok := c.instances.Load(id); !ok && node.DeletionTimestamp.IsZero() {
+			c.mu.RLock()
+			_, ok := c.instances[id]
+			c.mu.RUnlock()
+			if !ok && node.DeletionTimestamp.IsZero() {
 				if err = c.kubeClient.Delete(ctx, &node); client.IgnoreNotFound(err) != nil {
 					log.FromContext(ctx).WithValues("Node", klog.KObj(&node)).Error(err, "unable to delete due to gone instance")
 					continue
+
 				}
 			}
 		}
@@ -278,6 +286,13 @@ func (c *Client) StartKillNodeThread(ctx context.Context) {
 			return
 		}
 	}
+}
+
+func deepCopyInstance(instance ec2types.Instance) ec2types.Instance {
+	bytes := lo.Must(json.Marshal(instance))
+	var ret ec2types.Instance
+	lo.Must0(json.Unmarshal(bytes, &ret))
+	return ret
 }
 
 func removeNullFields(bytes []byte) []byte {
@@ -587,11 +602,16 @@ func (c *Client) CreateFleet(ctx context.Context, input *ec2.CreateFleetInput, _
 			VirtualizationType:       ec2types.VirtualizationTypeHvm,
 			VpcId:                    subnet.VpcId,
 		}
-		c.instances.Store(lo.FromPtr(instance.InstanceId), instance)
-		launchCtx, cancel := context.WithCancel(ctx)
-		c.instanceLaunchCancels.Store(lo.FromPtr(instance.InstanceId), cancel)
+		nodePoolName, availabilityZone, instanceType := c.resolveNodeDetails(instance)
+		instanceID := lo.FromPtr(instance.InstanceId)
 
-		go func() {
+		c.mu.Lock()
+		c.instances[instanceID] = instance
+		launchCtx, cancel := context.WithCancel(ctx)
+		c.instanceLaunchCancels[instanceID] = cancel
+		c.mu.Unlock()
+
+		go func(id, np, az string, it ec2types.InstanceType) {
 			select {
 			case <-launchCtx.Done():
 				return
@@ -599,12 +619,14 @@ func (c *Client) CreateFleet(ctx context.Context, input *ec2.CreateFleetInput, _
 			case <-c.clock.After(30 * time.Second):
 			}
 			if err := retry.OnError(retry.DefaultBackoff, func(_ error) bool { return true }, func() error {
-				return c.kubeClient.Create(launchCtx, c.toNode(ctx, instance))
+				return c.kubeClient.Create(launchCtx, c.toNode(ctx, instanceID, np, az, it))
 			}); err != nil {
-				c.instances.Delete(lo.FromPtr(instance.InstanceId))
-				c.instanceLaunchCancels.Delete(lo.FromPtr(instance.InstanceId))
+				c.mu.Lock()
+				delete(c.instances, id)
+				delete(c.instanceLaunchCancels, id)
+				c.mu.Unlock()
 			}
-		}()
+		}(instanceID, nodePoolName, availabilityZone, instanceType)
 		fleetInstances = append(fleetInstances, ec2types.CreateFleetInstance{
 			InstanceIds:  []string{lo.FromPtr(instance.InstanceId)},
 			InstanceType: instance.InstanceType,
@@ -654,10 +676,13 @@ func (c *Client) TerminateInstances(_ context.Context, input *ec2.TerminateInsta
 	}
 
 	for _, id := range input.InstanceIds {
-		c.instances.Delete(id)
-		if cancel, ok := c.instanceLaunchCancels.LoadAndDelete(id); ok {
-			cancel.(context.CancelFunc)()
+		c.mu.Lock()
+		delete(c.instances, id)
+		if cancel, ok := c.instanceLaunchCancels[id]; ok {
+			cancel()
 		}
+		delete(c.instanceLaunchCancels, id)
+		c.mu.Unlock()
 	}
 	return &ec2.TerminateInstancesOutput{
 		TerminatingInstances: lo.Map(input.InstanceIds, func(id string, _ int) ec2types.InstanceStateChange {
@@ -696,21 +721,23 @@ func (c *Client) DescribeInstances(_ context.Context, input *ec2.DescribeInstanc
 	var instances []ec2types.Instance
 	if len(input.InstanceIds) > 0 {
 		for _, id := range input.InstanceIds {
-			raw, ok := c.instances.Load(id)
+			c.mu.RLock()
+			instance, ok := c.instances[id]
 			if !ok {
+				c.mu.RUnlock()
 				return nil, &smithy.GenericAPIError{
 					Code: "InvalidInstanceID.NotFound",
 					// TODO: we can eventually expand this to list out every id
 					Message: fmt.Sprintf("The instance IDs '%s' do not exist", id),
 				}
 			}
-			instances = append(instances, raw.(ec2types.Instance))
+			instances = append(instances, deepCopyInstance(instance))
+			c.mu.RUnlock()
 		}
 	} else {
-		c.instances.Range(func(k, v interface{}) bool {
-			instances = append(instances, v.(ec2types.Instance))
-			return true
-		})
+		c.mu.RLock()
+		instances = append(instances, lo.MapToSlice(c.instances, func(_ string, i ec2types.Instance) ec2types.Instance { return deepCopyInstance(i) })...)
+		c.mu.RUnlock()
 	}
 
 	return &ec2.DescribeInstancesOutput{
@@ -767,12 +794,13 @@ func (c *Client) CreateTags(_ context.Context, input *ec2.CreateTagsInput, _ ...
 	for _, resource := range input.Resources {
 		switch {
 		case strings.Contains(resource, "i-"):
-			raw, ok := c.instances.Load(resource)
+			c.mu.Lock()
+			instance, ok := c.instances[resource]
 			if !ok {
+				c.mu.Unlock()
 				// For now, we just ignore if the resource doesn't exist
 				continue
 			}
-			instance := raw.(ec2types.Instance)
 			instance.Tags = lo.Reject(instance.Tags, func(t ec2types.Tag, _ int) bool {
 				for _, tag := range instance.Tags {
 					if tag.Key == t.Key {
@@ -782,7 +810,8 @@ func (c *Client) CreateTags(_ context.Context, input *ec2.CreateTagsInput, _ ...
 				return false
 			})
 			instance.Tags = append(instance.Tags, input.Tags...)
-			c.instances.Store(resource, instance)
+			c.instances[resource] = instance
+			c.mu.Unlock()
 		case strings.Contains(resource, "lt-"):
 			raw, ok := c.launchTemplates.Load(resource)
 			if !ok {
@@ -881,15 +910,19 @@ func (c *Client) DeleteLaunchTemplate(_ context.Context, input *ec2.DeleteLaunch
 	}, nil
 }
 
-func (c *Client) toNode(ctx context.Context, instance ec2types.Instance) *corev1.Node {
+func (c *Client) resolveNodeDetails(instance ec2types.Instance) (string, string, ec2types.InstanceType) {
 	nodePoolNameTag, _ := lo.Find(instance.Tags, func(t ec2types.Tag) bool {
 		return lo.FromPtr(t.Key) == v1.NodePoolLabelKey
 	})
 	subnet := lo.Must(lo.Find(c.subnets, func(s ec2types.Subnet) bool {
 		return lo.FromPtr(s.SubnetId) == lo.FromPtr(instance.SubnetId)
 	}))
+	return lo.FromPtr(nodePoolNameTag.Value), lo.FromPtr(subnet.AvailabilityZone), instance.InstanceType
+}
+
+func (c *Client) toNode(ctx context.Context, instanceID, nodePoolName, availabilityZone string, instanceType ec2types.InstanceType) *corev1.Node {
 	instanceTypeInfo := lo.Must(lo.Find(c.instanceTypes, func(i ec2types.InstanceTypeInfo) bool {
-		return i.InstanceType == instance.InstanceType
+		return i.InstanceType == instanceType
 	}))
 	// TODO: We need to get the capacity and allocatable information from the userData
 	it := instancetype.NewInstanceType(
@@ -922,17 +955,17 @@ func (c *Client) toNode(ctx context.Context, instance ec2types.Instance) *corev1
 				corev1.LabelInstanceTypeStable: it.Name,
 				corev1.LabelHostname:           nodeName,
 				corev1.LabelTopologyRegion:     it.Requirements.Get(corev1.LabelTopologyRegion).Any(),
-				corev1.LabelTopologyZone:       lo.FromPtr(subnet.AvailabilityZone),
+				corev1.LabelTopologyZone:       availabilityZone,
 				v1.CapacityTypeLabelKey:        v1.CapacityTypeOnDemand,
 				corev1.LabelArchStable:         it.Requirements.Get(corev1.LabelArchStable).Any(),
 				corev1.LabelOSStable:           string(corev1.Linux),
-				v1.NodePoolLabelKey:            lo.FromPtr(nodePoolNameTag.Value),
+				v1.NodePoolLabelKey:            nodePoolName,
 				v1alpha1.KwokLabelKey:          v1alpha1.KwokLabelValue,
-				v1alpha1.KwokPartitionLabelKey: "a",
+				// TODO: Figure out how to handle the partition key when it comes from a passed label
 			},
 		},
 		Spec: corev1.NodeSpec{
-			ProviderID: fmt.Sprintf("kwok-aws:///%s/%s", lo.FromPtr(subnet.AvailabilityZone), lo.FromPtr(instance.InstanceId)),
+			ProviderID: fmt.Sprintf("kwok-aws:///%s/%s", availabilityZone, instanceID),
 			Taints:     []corev1.Taint{v1.UnregisteredNoExecuteTaint},
 		},
 		Status: corev1.NodeStatus{
